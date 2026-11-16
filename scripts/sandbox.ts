@@ -345,27 +345,16 @@ function build(options: Record<string, string | undefined>): void {
     "NODE_BASE",
     "BROWSER_SHA256_ARM64",
     "BROWSER_SHA256_AMD64",
+    "PNPM_VERSION",
+    "BROWSER_VERSION",
+    "CODEX_VERSION",
+    "AGENT_BROWSER_VERSION",
+    "HC_VERSION",
+    "JJ_VERSION",
   ]) {
     const value = process.env[`IMAGE_${name}`];
     if (!value) throw new Error(`Missing IMAGE_${name}; run through mise`);
     args.push("--build-arg", `${name}=${value}`);
-  }
-  for (const name of [
-    "MISE",
-    "NODE",
-    "PNPM",
-    "BROWSER",
-    "CODEX",
-    "AGENT_BROWSER",
-    "HC",
-    "JJ",
-  ]) {
-    const value = process.env[`IMAGE_${name}_VERSION`];
-    if (!value)
-      throw new Error(
-        `Missing IMAGE_${name}_VERSION; run through mise exec or mise run build`,
-      );
-    args.push("--build-arg", `${name}_VERSION=${value}`);
   }
   if (engine === "container") args.push("--dns", options.dns ?? DEFAULT_DNS);
   else if (options.dns)

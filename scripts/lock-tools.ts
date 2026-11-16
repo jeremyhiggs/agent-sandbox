@@ -72,11 +72,6 @@ execFileSync("pnpm", ["install", "--lockfile-only", "--ignore-scripts"], {
   cwd: tools,
   stdio: "inherit",
 });
-execFileSync(
-  "pnpm",
-  ["install", "--lockfile-only", "--frozen-lockfile", "--ignore-scripts"],
-  { cwd: tools, stdio: "inherit" },
-);
 writeFileSync(
   join(root, "artifacts.json"),
   `${JSON.stringify(lock, null, 2)}\n`,

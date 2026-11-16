@@ -55,8 +55,8 @@ and `--engine container|docker` select a subset or runtime.
 
 `lock:tools` records archive URLs and hashes for the pinned CLI versions and
 refreshes the pnpm graph for Codex and agent-browser. It checks the hc archive
-against the vendor manifest before recording its hash. A frozen install checks
-the resulting pnpm lock. Dependency changes remain local for review.
+against the vendor manifest before recording its hash. `lock:check` validates
+the resulting pnpm lock with a frozen install. Dependency changes remain local for review.
 
 For a Chrome update, change its version and both archive hashes in `mise.toml`.
 `audit:browser` compares the pin against Google's stable release. This audit is
