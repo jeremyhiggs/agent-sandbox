@@ -1,90 +1,49 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, rmSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 export const packageRequests = {
-  wolfi: {
-    base: [
-      "bash",
-      "ca-certificates-bundle",
-      "curl",
-      "git",
-      "git-lfs",
-      "jq",
-      "less",
-      "nodejs-24",
-      "openssh-client",
-      "procps",
-      "ripgrep",
-      "tini",
-      "unzip",
-      "xz",
-    ],
-    browser: [
-      "alsa-lib",
-      "at-spi2-core",
-      "cairo",
-      "cups-libs",
-      "font-liberation",
-      "glib",
-      "libatk-1.0",
-      "libatk-bridge-2.0",
-      "libdrm",
-      "libx11",
-      "libxcb",
-      "libxcomposite",
-      "libxdamage",
-      "libxext",
-      "libxfixes",
-      "libxkbcommon",
-      "libxrandr",
-      "mesa-gbm",
-      "libnspr",
-      "libnss",
-      "libudev",
-      "pango",
-    ],
-  },
-  debian: {
-    base: [
-      "bash",
-      "ca-certificates",
-      "curl",
-      "git",
-      "git-lfs",
-      "jq",
-      "less",
-      "libatomic1",
-      "libstdc++6",
-      "openssh-client",
-      "procps",
-      "ripgrep",
-      "tini",
-      "unzip",
-      "xz-utils",
-    ],
-    browser: [
-      "fonts-liberation",
-      "libasound2t64",
-      "libatk-bridge2.0-0t64",
-      "libatspi2.0-0t64",
-      "libcups2t64",
-      "libcairo2",
-      "libpango-1.0-0",
-      "libdrm2",
-      "libgbm1",
-      "libnss3",
-      "libudev1",
-      "libx11-xcb1",
-      "libxcomposite1",
-      "libxdamage1",
-      "libxfixes3",
-      "libxkbcommon0",
-      "libxrandr2",
-    ],
-  },
+  base: [
+    "bash",
+    "ca-certificates-bundle",
+    "curl",
+    "git",
+    "git-lfs",
+    "jq",
+    "less",
+    "nodejs-24",
+    "openssh-client",
+    "procps",
+    "ripgrep",
+    "tini",
+    "unzip",
+    "xz",
+  ],
+  browser: [
+    "alsa-lib",
+    "at-spi2-core",
+    "cairo",
+    "cups-libs",
+    "font-liberation",
+    "glib",
+    "libatk-1.0",
+    "libatk-bridge-2.0",
+    "libdrm",
+    "libx11",
+    "libxcb",
+    "libxcomposite",
+    "libxdamage",
+    "libxext",
+    "libxfixes",
+    "libxkbcommon",
+    "libxrandr",
+    "mesa-gbm",
+    "libnspr",
+    "libnss",
+    "libudev",
+    "pango",
+  ],
 };
-export type Distro = keyof typeof packageRequests;
 export type Profile = "base" | "browser";
 
 export function parsePackagePins(contents: string): string[] {
@@ -129,43 +88,22 @@ export function verifyPackageInventory(
     );
 }
 
-export function distro(): Distro {
-  return existsSync("/sbin/apk") ? "wolfi" : "debian";
-}
-
 export function packagePins(profile: Profile): string[] {
   const arch = process.arch === "arm64" ? "arm64" : "amd64";
   return parsePackagePins(
     readFileSync(
-      join(import.meta.dirname, "locks", distro(), arch, `${profile}.txt`),
+      join(import.meta.dirname, "locks", "wolfi", arch, `${profile}.txt`),
       "utf8",
     ),
   );
 }
 
 export function installedPackages(): string[] {
-  return distro() === "wolfi"
-    ? parseApkDatabase(readFileSync("/lib/apk/db/installed", "utf8"))
-    : execFileSync("dpkg-query", ["-W", "-f=${binary:Package}=${Version}\n"], {
-        encoding: "utf8",
-      })
-        .trim()
-        .split("\n")
-        .sort();
+  return parseApkDatabase(readFileSync("/lib/apk/db/installed", "utf8"));
 }
 
 export function installBrowserPackages(): void {
   const pins = packagePins("browser");
-  if (distro() === "wolfi")
-    execFileSync("apk", ["add", "--no-cache", ...pins], { stdio: "inherit" });
-  else {
-    execFileSync("apt-get", ["update"], { stdio: "inherit" });
-    execFileSync(
-      "apt-get",
-      ["install", "-y", "--no-install-recommends", ...pins],
-      { stdio: "inherit" },
-    );
-    rmSync("/var/lib/apt/lists", { recursive: true, force: true });
-  }
+  execFileSync("apk", ["add", "--no-cache", ...pins], { stdio: "inherit" });
   verifyPackageInventory(pins, installedPackages(), false);
 }

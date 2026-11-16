@@ -1,29 +1,13 @@
 # syntax=docker/dockerfile:1
-ARG DISTRO=wolfi
 ARG WOLFI_BASE
 ARG MISE_BASE
-ARG NODE_BASE
-ARG DEBIAN_BASE
 FROM ${MISE_BASE} AS mise
-FROM ${NODE_BASE} AS node
 
-FROM ${DEBIAN_BASE} AS debian
-ARG TARGETARCH
-SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-COPY image/locks/debian/${TARGETARCH}/base.txt /tmp/packages.lock
-RUN apt-get update \
-    && xargs apt-get install -y --no-install-recommends < /tmp/packages.lock \
-    && rm /tmp/packages.lock \
-    && rm -rf /var/lib/apt/lists/*
-# Copy only the runtime, excluding npm, npx, Yarn, and their dependency trees.
-COPY --from=node /usr/local/bin/node /usr/local/bin/node
-
-FROM ${WOLFI_BASE} AS wolfi
+FROM ${WOLFI_BASE} AS base
 ARG TARGETARCH
 COPY image/locks/wolfi/${TARGETARCH}/base.txt /tmp/packages.lock
 RUN xargs apk add --no-cache < /tmp/packages.lock && rm /tmp/packages.lock
 
-FROM ${DISTRO} AS base
 ARG CODEX_VERSION
 ARG PNPM_VERSION
 ARG AGENT_BROWSER_VERSION

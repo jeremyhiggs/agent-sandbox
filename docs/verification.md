@@ -19,11 +19,12 @@ package/advisory entries, not unique CVEs or individually validated exploit path
 The two distributions use different advisory feeds and package inventories, so
 zero findings alone does not establish that one distribution has no vulnerabilities.
 
-The Debian comparison uses a complete, frozen 133-package lock. Its remaining critical
-finding is `CVE-2026-60002` in OpenSSH. It still ships the Debian 10.0 package line
-and fails the minimum OpenSSH 10.4 policy. Trivy listed no fixed versions for its
-128 high/critical entries. This comparison is available for Debian-specific repos;
-it is not the default image and does not pass the configured security gate.
+The Debian comparison used a complete, frozen 133-package lock. Its critical
+finding was `CVE-2026-60002` in OpenSSH. It shipped the Debian 10.0 package line
+and failed the minimum OpenSSH 10.4 policy. Trivy listed no fixed versions for its
+128 high/critical entries. These are historical comparison results. Debian build
+support and locks have since been removed, and both local Debian sandbox images
+were deleted, reclaiming 4.21 GB.
 
 The default Wolfi image has OpenSSH 10.6p2, locked repository packages, and no
 libxml2 dependency. The browser profile brings libxml2 2.15.0 through its runtime
@@ -33,12 +34,10 @@ packages. Compiler runtime libraries are retained where other tools require them
 
 ## Built artifacts
 
-| Tag                            | Image index digest                                                        |
-| ------------------------------ | ------------------------------------------------------------------------- |
-| `codex-sandbox:local`          | `sha256:89fb57d71cf3e1937d778b60038264a89c436a765c6d20bd952082ab430375aa` |
-| `codex-sandbox:browser`        | `sha256:14f51e4723b62816ac74b2a698b40fce4f5be956255828762e07fbd223e3a61d` |
-| `codex-sandbox:debian`         | `sha256:5d4eada35d582ec4d363cfe1662b9e202c331394ee88841af3594ee2fdc1953c` |
-| `codex-sandbox:initial-debian` | `sha256:0f8e85a955178185cb9eb6838087bfad831c2c9460c44b576b6b14ec6ba50da2` |
+| Tag                     | Image index digest                                                        |
+| ----------------------- | ------------------------------------------------------------------------- |
+| `codex-sandbox:local`   | `sha256:90fb4a5ef879f857a1e8fa4d539ec9c157818ba4b393d75b29305b6244d5f8bd` |
+| `codex-sandbox:browser` | `sha256:14f51e4723b62816ac74b2a698b40fce4f5be956255828762e07fbd223e3a61d` |
 
 Shared tool versions: Node 24.22.3, pnpm 11.28.12, mise 2026.11.7, Codex 0.167.2,
 agent-browser 0.43.0, hc 0.1.20, and JJ 0.47.1. The browser image uses Google Chrome
@@ -46,6 +45,15 @@ for Testing 157.0.8103.78, with separate verified archive hashes for arm64 and a
 The pinned Wolfi base index was checked to contain both architectures.
 
 ## Passed checks
+
+After removing Debian support, the Wolfi core rebuilt successfully and passed
+its runtime inventory/tool checks and Trivy scan with no findings. All 20 tests,
+lint/type checks, and four Wolfi lock checks passed. A fresh CodeRabbit review
+of the removal returned no findings. The browser rebuild reached its exact
+132-package inventory check, then failed on a Chrome download timeout; a retry
+failed fetching the APK index. Its tag above remains the earlier image. The
+updated image scripts, mounted read-only into that image, passed the inventory,
+tool, and agent-browser page/title checks. The temporary builder was removed.
 
 - `mise run check`: formatting, script lint, TypeScript checking, documentation
   lint, TOML formatting, Dockerfile lint, GitHub Actions lint, lock validation,
@@ -55,7 +63,8 @@ The pinned Wolfi base index was checked to contain both architectures.
   Browser freshness passes too. A deliberately stale pin failed that separate audit.
 - Cold builds of both Wolfi profiles and the Debian core comparison passed their
   exact OS inventory checks. The image tools used a frozen pnpm install and
-  checksum-verified CLI archives. All eight OS locks passed validation.
+  checksum-verified CLI archives. All eight then-current OS locks passed validation;
+  four Wolfi locks remain after removing Debian support.
 - `mise run smoke` and `mise run smoke:browser`: linked Git worktree access, skill
   directory/file symlinks, read-only skill enforcement, excluded host-file access,
   shared file/index writes, separate guest hc state, host hc reading a guest
@@ -112,9 +121,9 @@ runs the same vulnerability gate and uploads each report. It also runs lint,
 tests, repository Trivy and Node dependency audits, and browser freshness. The
 schedule is daily at **00:00 UTC** (`0 0 * * *`). Hosted CI has not run: the
 repository is local and has no remote. Full image behavior and macOS hc integration
-were exercised on arm64. Both Debian architecture locks came from actual package
-installs. Both Wolfi architecture locks came from APK simulation. Debian is an explicit local comparison,
-not part of the passing Wolfi CI matrix.
+were exercised on arm64. The retired Debian architecture locks came from actual
+package installs. Both Wolfi architecture locks came from APK simulation.
+Only Wolfi core/browser profiles are supported and included in the CI matrix.
 
 Local testing encountered intermittent Apple guest networking failures, including
 with an explicit DNS resolver. Restarting the container services restored access.

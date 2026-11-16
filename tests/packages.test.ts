@@ -15,10 +15,10 @@ test("package locks require exact versions and reject duplicate names", () => {
     "curl=1\ncurl=1",
   ])
     assert.throws(() => parsePackagePins(content), /Invalid package lock/);
-  assert.deepEqual(
-    parsePackagePins("libc6:arm64=2.41-12\ncurl=1:8.14.1-2+deb13u2\n"),
-    ["libc6:arm64=2.41-12", "curl=1:8.14.1-2+deb13u2"],
-  );
+  assert.deepEqual(parsePackagePins("libgcc=16.2.0-r4\ncurl=8.17.0-r1\n"), [
+    "libgcc=16.2.0-r4",
+    "curl=8.17.0-r1",
+  ]);
 });
 
 test("APK inventory preserves revisions and hyphenated package names", () => {

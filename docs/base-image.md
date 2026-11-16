@@ -1,6 +1,6 @@
 # Base image decision
 
-Wolfi is the default for this disposable development environment. Mise supplies
+Wolfi is the only supported base for this disposable development environment. Mise supplies
 repository tool versions. APK supplies system libraries and optional build tools.
 This choice applies to the tested agent environment, not every Linux repository.
 
@@ -18,7 +18,7 @@ The local arm64 results from 16 November 2026 are:
 
 Wolfi supplies an OpenSSH release that passes the minimum version policy. Its
 current package inventory also passes the vulnerability gate. These measured
-results are the main reasons for the default. The size difference between the
+results are the main reasons for the choice. The size difference between the
 equivalent lean images is about 10 percent.
 
 Removing the browser and build tools accounts for most savings against the
@@ -128,7 +128,7 @@ apk policy openssl-dev
 also links to a browser-based package explorer. The catalogue and available
 versions change, so the counts above are a dated snapshot.
 
-## Tradeoffs and reasons to use Debian
+## Compatibility limits
 
 - A repo that assumes `apt`, Debian package names, or `.deb` installation needs
   changes. Mise does not translate those commands or package names.
@@ -149,11 +149,11 @@ versions change, so the counts above are a dated snapshot.
 - A clean scan covers the scanner's inventory and advisory feeds. It does not
   certify every binary or prove that Wolfi is universally safer than Debian.
 
-If a required package is unavailable, a Linux binary fails, or Debian-specific
-setup needs extensive changes, Debian slim is the better compatibility choice.
-The Dockerfile retains that option through `mise run build:debian`. The current
-Debian comparison still fails the security gate, so it needs remediation before
-it can replace the default.
+The earlier Debian build path and package locks have been removed. None of the
+tested workflows requires them, and maintaining a fallback that fails the security
+gate adds no usable capability. A concrete repository compatibility problem can
+justify reconsidering that choice. The comparison above records the earlier
+measurements; it is not a supported build variant.
 
 The Apple VM and mount policy protect the host filesystem. The distribution
 choice controls guest package compatibility, size, and maintenance. It does not

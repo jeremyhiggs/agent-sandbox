@@ -320,13 +320,9 @@ function build(options: Record<string, string | undefined>): void {
     stdio: "inherit",
   });
   const engine = options.engine ?? "container";
-  const distro = options.distro ?? "wolfi",
-    variant = options.variant ?? "base";
-  if (
-    !["wolfi", "debian"].includes(distro) ||
-    !["base", "browser"].includes(variant)
-  )
-    throw new Error("Use --distro wolfi|debian and --variant base|browser");
+  const variant = options.variant ?? "base";
+  if (!["base", "browser"].includes(variant))
+    throw new Error("Use --variant base|browser");
   const args = [
     "build",
     "--pull",
@@ -335,14 +331,10 @@ function build(options: Record<string, string | undefined>): void {
     options.image ?? IMAGE,
     "--target",
     variant,
-    "--build-arg",
-    `DISTRO=${distro}`,
   ];
   for (const name of [
     "WOLFI_BASE",
-    "DEBIAN_BASE",
     "MISE_BASE",
-    "NODE_BASE",
     "BROWSER_SHA256_ARM64",
     "BROWSER_SHA256_AMD64",
     "PNPM_VERSION",
@@ -464,7 +456,6 @@ export function parseOptions(command: string, args: string[]) {
     "cpus",
     "memory",
     "dns",
-    "distro",
     "variant",
   ];
   let split = args.indexOf("--");
@@ -526,7 +517,7 @@ async function main(): Promise<void> {
   }
   if (!["build", "scan", "start", "run"].includes(command)) {
     console.log(
-      "Usage: mise run <build|scan|start|codex|stop|shell|attach|browser|status> [options]\nOptions: --checkout PATH --name cs-NAME --home PATH --image TAG --dns IP --cpus N --memory 4G\nBuild: --distro wolfi|debian --variant base|browser\nCodex arguments follow --. Stop/shell/attach/browser take a guest name.",
+      "Usage: mise run <build|scan|start|codex|stop|shell|attach|browser|status> [options]\nOptions: --checkout PATH --name cs-NAME --home PATH --image TAG --dns IP --cpus N --memory 4G\nBuild: --variant base|browser\nCodex arguments follow --. Stop/shell/attach/browser take a guest name.",
     );
     if (command && command !== "--help") process.exitCode = 1;
     return;

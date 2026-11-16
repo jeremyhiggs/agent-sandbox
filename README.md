@@ -200,10 +200,10 @@ discoverable as `google-chrome`; its provenance is recorded in
 `/opt/chrome/vendor-release.json`. A guest installation disappears on teardown.
 No host browser or browser profile is mounted.
 
-## Wolfi and Debian slim
+## Wolfi base image
 
-Wolfi is the default because the trimmed image passes the current security gate
-and supports the required Linux tools. The equivalent Debian slim image retains
+Wolfi is the only supported base because the trimmed image passes the current security gate
+and supports the required Linux tools. The earlier Debian slim comparison recorded
 128 HIGH/CRITICAL findings and an older OpenSSH release. Wolfi uses glibc, which
 supports common prebuilt Linux tools. Mise language installs, config-defined
 environment variables, tasks, and APK bootstrap passed live checks in this image.
@@ -214,20 +214,9 @@ every repo. Package names, `apt` assumptions, BusyBox utilities, and source-buil
 dependencies need review. Wolfi and Alpine packages cannot be mixed.
 
 [The base image decision](docs/base-image.md) records the evidence, package
-coverage, mise example, tradeoffs, and reasons to select Debian instead.
-
-The Dockerfile also supports a trimmed Debian 13 slim comparison:
-
-```sh
-mise run build:debian
-mise run scan:debian
-```
-
-Debian slim remains useful for repos tied to Debian packages. The initial image
-already used a slim base; removing the bundled browser and build tools accounts
-for much of the reduction. The current Debian comparison still fails the
-security gate and minimum OpenSSH check, so Wolfi is the default. See
-[verification](docs/verification.md) for measured results and compatibility checks.
+coverage, mise example, and compatibility limits. The earlier Debian comparison
+is retained in [verification](docs/verification.md) as historical evidence;
+its build targets, tasks, and package locks have been removed.
 
 ## Checks and CI
 

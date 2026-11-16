@@ -6,18 +6,18 @@ the image packages.
 
 ## What is locked
 
-| Input                                     | Lock source                                             | Build behavior                                     |
-| ----------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
-| Wolfi, Debian, Node, and mise base images | Digest references in `mise.toml`                        | Pull the specified OCI content                     |
-| OS packages and transitive dependencies   | `image/locks/DISTRO/ARCH/PROFILE.txt`                   | Install exact `name=version` entries               |
-| pnpm, JJ, and hc archives                 | `image/artifacts.json`                                  | Check the archive SHA-256 before extraction        |
-| Codex and agent-browser dependencies      | `image/tools/package.json` and `pnpm-lock.yaml`         | Use pnpm with `--frozen-lockfile --ignore-scripts` |
-| Chrome                                    | Version and architecture-specific hashes in `mise.toml` | Check the pinned archive checksum                  |
-| Repository Node dependencies              | Root `pnpm-lock.yaml`                                   | Use a frozen install                               |
+| Input                                   | Lock source                                             | Build behavior                                     |
+| --------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
+| Wolfi and mise base images              | Digest references in `mise.toml`                        | Pull the specified OCI content                     |
+| OS packages and transitive dependencies | `image/locks/wolfi/ARCH/PROFILE.txt`                    | Install exact `name=version` entries               |
+| pnpm, JJ, and hc archives               | `image/artifacts.json`                                  | Check the archive SHA-256 before extraction        |
+| Codex and agent-browser dependencies    | `image/tools/package.json` and `pnpm-lock.yaml`         | Use pnpm with `--frozen-lockfile --ignore-scripts` |
+| Chrome                                  | Version and architecture-specific hashes in `mise.toml` | Check the pinned archive checksum                  |
+| Repository Node dependencies            | Root `pnpm-lock.yaml`                                   | Use a frozen install                               |
 
-The OS locks cover Wolfi and Debian, arm64 and amd64, and core/browser profiles.
+The OS locks cover Wolfi, arm64 and amd64, and core/browser profiles.
 They include packages inherited from the pinned base, not only explicit requests.
-The core has 68 Wolfi packages or 133 Debian packages per architecture.
+The core has 68 packages per architecture, including the pinned Node runtime.
 
 `mise run lock:check` checks exact pins, duplicate names, package requests, base
 digests, and agreement with tool versions in `mise.toml`. Builds run this check
@@ -47,11 +47,10 @@ mise run scan:browser
 mise run smoke:browser
 ```
 
-`lock:update` resolves complete OS package sets in temporary guests. Wolfi uses
-APK's simulation mode. Debian installs the requested packages to capture its
-complete dpkg inventory. The guests have no host checkout or credential mounts.
-The task removes them afterward. `--distro wolfi|debian`, `--arch arm64|amd64`,
-and `--engine container|docker` select a subset or runtime.
+`lock:update` resolves complete OS package sets in temporary Wolfi guests using
+APK's simulation mode. The guests have no host checkout or credential mounts.
+The task removes them afterward. `--arch arm64|amd64` and
+`--engine container|docker` select an architecture or runtime.
 
 `lock:tools` records archive URLs and hashes for the pinned CLI versions and
 refreshes the pnpm graph for Codex and agent-browser. It checks the hc archive
@@ -94,7 +93,7 @@ OCI images. Build timestamps and generated package-manager metadata can differ.
 The check proves the installed OS package set, while hashes lock the standalone
 archives and pnpm package contents.
 
-Package availability is a separate requirement. Wolfi and Debian repositories
+Package availability is a separate requirement. Wolfi repositories
 can remove old versions. Exact pins make that a build error instead of an
 implicit upgrade. Rebuilds after package removal require a retained image,
 archive cache, mirror, or snapshot repository. See
