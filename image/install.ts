@@ -1,70 +1,94 @@
+import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
+  mkdirSync,
   mkdtempSync,
-  renameSync,
+  readFileSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  installedPackages,
+  packagePins,
+  verifyPackageInventory,
+} from "./packages.ts";
 
 function run(command: string, args: string[]) {
   execFileSync(command, args, { stdio: "inherit" });
 }
-function version(name: string): string {
-  const value = process.env[`${name}_VERSION`];
-  if (!value) throw new Error(`Missing ${name}_VERSION build argument`);
-  return value;
-}
-
-run("mise", ["install-into", `jj@${version("JJ")}`, "/opt/jj"]);
-symlinkSync("/opt/jj/jj", "/usr/local/bin/jj");
-execFileSync(
-  "mise",
-  ["install-into", `npm:pnpm@${version("PNPM")}`, "/opt/pnpm"],
-  {
-    stdio: "inherit",
-    env: { ...process.env, MISE_NPM_PACKAGE_MANAGER: "aube" },
-  },
-);
-symlinkSync("/opt/pnpm/node_modules/pnpm/bin/pnpm.cjs", "/usr/local/bin/pnpm");
-for (const [name, packageName, pin] of [
-  ["codex", "@openai/codex", "CODEX"],
-  ["agent-browser", "agent-browser", "AGENT_BROWSER"],
-]) {
-  run("mise", [
-    "install-into",
-    `npm:${packageName}@${version(pin)}`,
-    `/opt/${name}`,
-  ]);
-  symlinkSync(`/opt/${name}/bin/${name}`, `/usr/local/bin/${name}`);
-}
-const base = `https://releases.herdr.dev/core/${version("HC")}`;
-const response = await fetch(`${base}/manifest.json`);
-if (!response.ok) throw new Error(`hc manifest: HTTP ${response.status}`);
-const manifest = (await response.json()) as {
-  targets: Record<string, { url: string; sha256: string }>;
+type Artifact = { url: string; sha256: string };
+type Release = { version: string; arm64: Artifact; amd64: Artifact };
+const locks = JSON.parse(
+  readFileSync(join(import.meta.dirname, "artifacts.json"), "utf8"),
+) as {
+  pnpm: Artifact & { version: string };
+  jj: Release;
+  hc: Release;
 };
-const arch = process.arch === "arm64" ? "aarch64" : "x86_64";
-const entry = manifest.targets[`linux-${arch}`];
-const download = await fetch(entry.url);
-if (!download.ok) throw new Error(`hc download: HTTP ${download.status}`);
-const bytes = Buffer.from(await download.arrayBuffer());
-if (createHash("sha256").update(bytes).digest("hex") !== entry.sha256) {
-  throw new Error("hc archive checksum mismatch");
+verifyPackageInventory(packagePins("base"), installedPackages());
+async function install(
+  tool: "pnpm" | "jj" | "hc",
+  destination: string,
+  members: string[],
+) {
+  const release = locks[tool];
+  assert.equal(
+    release.version,
+    process.env[tool.toUpperCase() + "_VERSION"],
+    tool + " artifact lock differs from mise pin",
+  );
+  const artifact =
+    tool === "pnpm"
+      ? locks.pnpm
+      : (release as Release)[process.arch === "arm64" ? "arm64" : "amd64"];
+  const response = await fetch(artifact.url);
+  if (!response.ok) throw new Error(tool + " archive HTTP " + response.status);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  assert.equal(
+    createHash("sha256").update(bytes).digest("hex"),
+    artifact.sha256,
+    tool + " archive checksum mismatch",
+  );
+  const temp = mkdtempSync(join(tmpdir(), tool + "-install-"));
+  try {
+    const archive = join(temp, "archive.tar.gz");
+    writeFileSync(archive, bytes);
+    mkdirSync(destination, { recursive: true });
+    run("tar", ["-xzf", archive, "-C", destination, ...members]);
+  } finally {
+    rmSync(temp, { recursive: true });
+  }
 }
-const temp = mkdtempSync(join(tmpdir(), "hc-install-"));
-try {
-  const archive = join(temp, "hc.tar.gz");
-  writeFileSync(archive, bytes);
-  run("tar", ["-xzf", archive, "-C", temp, "herdr-core"]);
-  renameSync(join(temp, "herdr-core"), "/usr/local/bin/herdr-core");
-  symlinkSync("herdr-core", "/usr/local/bin/hc");
-} finally {
-  rmSync(temp, { recursive: true });
-}
+await install("jj", "/opt/jj", ["./jj", "./LICENSE"]);
+symlinkSync("/opt/jj/jj", "/usr/local/bin/jj");
+await install("pnpm", "/opt/pnpm", ["--strip-components=1"]);
+symlinkSync("/opt/pnpm/bin/pnpm.cjs", "/usr/local/bin/pnpm");
+const manifest = JSON.parse(
+  readFileSync("/opt/agent-tools/package.json", "utf8"),
+) as { dependencies: Record<string, string> };
+assert.equal(manifest.dependencies["@openai/codex"], process.env.CODEX_VERSION);
+assert.equal(
+  manifest.dependencies["agent-browser"],
+  process.env.AGENT_BROWSER_VERSION,
+);
+run("pnpm", [
+  "--dir",
+  "/opt/agent-tools",
+  "install",
+  "--frozen-lockfile",
+  "--ignore-scripts",
+]);
+for (const tool of ["codex", "agent-browser"])
+  symlinkSync(
+    "/opt/agent-tools/node_modules/.bin/" + tool,
+    "/usr/local/bin/" + tool,
+  );
+await install("hc", "/usr/local/bin", ["herdr-core"]);
+symlinkSync("herdr-core", "/usr/local/bin/hc");
 for (const tool of [
   "mise",
   "node",

@@ -1,28 +1,27 @@
 # syntax=docker/dockerfile:1
-ARG MISE_VERSION
-ARG NODE_VERSION
 ARG DISTRO=wolfi
 ARG WOLFI_BASE
-FROM ghcr.io/jdx/mise:${MISE_VERSION} AS mise
-FROM node:${NODE_VERSION}-trixie-slim AS node
+ARG MISE_BASE
+ARG NODE_BASE
+ARG DEBIAN_BASE
+FROM ${MISE_BASE} AS mise
+FROM ${NODE_BASE} AS node
 
-FROM debian:trixie-slim AS debian
+FROM ${DEBIAN_BASE} AS debian
+ARG TARGETARCH
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
-# hadolint ignore=DL3008
-RUN apt-get update && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends \
-        bash ca-certificates curl git git-lfs jq less libatomic1 libstdc++6 \
-        openssh-client procps ripgrep tini unzip xz-utils \
+COPY image/locks/debian/${TARGETARCH}/base.txt /tmp/packages.lock
+RUN apt-get update \
+    && xargs apt-get install -y --no-install-recommends < /tmp/packages.lock \
+    && rm /tmp/packages.lock \
     && rm -rf /var/lib/apt/lists/*
 # Copy only the runtime, excluding npm, npx, Yarn, and their dependency trees.
 COPY --from=node /usr/local/bin/node /usr/local/bin/node
 
 FROM ${WOLFI_BASE} AS wolfi
-ARG NODE_VERSION
-# hadolint ignore=DL3018
-RUN apk upgrade --no-cache && apk add --no-cache \
-    bash ca-certificates-bundle curl git git-lfs jq less \
-    "nodejs-24~${NODE_VERSION}" openssh-client procps ripgrep tini unzip xz
+ARG TARGETARCH
+COPY image/locks/wolfi/${TARGETARCH}/base.txt /tmp/packages.lock
+RUN xargs apk add --no-cache < /tmp/packages.lock && rm /tmp/packages.lock
 
 FROM ${DISTRO} AS base
 ARG CODEX_VERSION
@@ -41,11 +40,13 @@ ENV SHELL="/bin/bash" LANG="C.UTF-8" \
     BROWSER_SHA256_ARM64="${BROWSER_SHA256_ARM64}" \
     BROWSER_SHA256_AMD64="${BROWSER_SHA256_AMD64}" \
     AGENT_BROWSER_ARGS="--no-sandbox,--disable-dev-shm-usage"
-COPY image/install.ts image/check.ts image/browser.ts /opt/codex-container/
+COPY image/*.ts image/artifacts.json /opt/codex-container/
+COPY image/locks/ /opt/codex-container/locks/
+COPY image/tools/package.json image/tools/pnpm-lock.yaml /opt/agent-tools/
 RUN node /opt/codex-container/install.ts
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sleep", "infinity"]
 
 FROM base AS browser
 RUN node /opt/codex-container/browser.ts
-ENV AGENT_BROWSER_EXECUTABLE_PATH="/opt/chrome/chrome"
+ENV AGENT_BROWSER_EXECUTABLE_PATH="/opt/chrome/chrome" IMAGE_PROFILE="browser"

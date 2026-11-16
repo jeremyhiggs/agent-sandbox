@@ -18,9 +18,11 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { checkVulnerabilities } from "./vulnerabilities.ts";
 
 export const ROOT = resolve(import.meta.dirname, "..");
 export const IMAGE = "codex-sandbox:local";
+export const DEFAULT_DNS = process.env.CONTAINER_DNS ?? "1.1.1.1";
 const LABEL = "dev.codex-sandbox.managed";
 
 export function run(command: string, args: string[]): string {
@@ -267,7 +269,7 @@ export function start(options: Options): { name: string; checkout: string } {
     "--env",
     "AGENT_BROWSER_SOCKET_DIR=/tmp/agent-browser",
   ];
-  if (options.dns) args.push("--dns", options.dns);
+  args.push("--dns", options.dns ?? DEFAULT_DNS);
   console.error(`Starting ${name}; host mounts:`);
   for (const [path, readonly] of mounts) {
     if (/[:,\n]/.test(path))
@@ -314,6 +316,9 @@ export function stop(name: string): void {
 }
 
 function build(options: Record<string, string | undefined>): void {
+  execFileSync("node", [join(ROOT, "scripts", "check-locks.ts")], {
+    stdio: "inherit",
+  });
   const engine = options.engine ?? "container";
   const distro = options.distro ?? "wolfi",
     variant = options.variant ?? "base";
@@ -335,6 +340,9 @@ function build(options: Record<string, string | undefined>): void {
   ];
   for (const name of [
     "WOLFI_BASE",
+    "DEBIAN_BASE",
+    "MISE_BASE",
+    "NODE_BASE",
     "BROWSER_SHA256_ARM64",
     "BROWSER_SHA256_AMD64",
   ]) {
@@ -359,11 +367,9 @@ function build(options: Record<string, string | undefined>): void {
       );
     args.push("--build-arg", `${name}_VERSION=${value}`);
   }
-  if (options.dns) {
-    if (engine !== "container")
-      throw new Error("Build --dns is supported only by Apple's runtime");
-    args.push("--dns", options.dns);
-  }
+  if (engine === "container") args.push("--dns", options.dns ?? DEFAULT_DNS);
+  else if (options.dns)
+    throw new Error("Build --dns is supported only by Apple's runtime");
   execFileSync(engine, [...args, ROOT], { stdio: "inherit" });
 }
 
@@ -399,33 +405,7 @@ function scan(engine: string, image: string): void {
       "--exit-code",
       "0",
     ]);
-    const results = JSON.parse(readFileSync(report, "utf8")) as {
-      Results?: {
-        Type: string;
-        Vulnerabilities?: { Severity: string; FixedVersion?: string }[];
-      }[];
-    };
-    let blocked = 0;
-    for (const result of results.Results ?? []) {
-      const counts: Record<string, number> = {};
-      let fixable = 0;
-      for (const vulnerability of result.Vulnerabilities ?? []) {
-        counts[vulnerability.Severity] =
-          (counts[vulnerability.Severity] ?? 0) + 1;
-        if (["HIGH", "CRITICAL"].includes(vulnerability.Severity)) {
-          blocked++;
-          if (vulnerability.FixedVersion) fixable++;
-        }
-      }
-      console.log(
-        `${result.Type}: ${JSON.stringify(counts)}; fixable HIGH/CRITICAL: ${fixable}`,
-      );
-    }
-    console.log(`Complete report: ${report}`);
-    if (blocked)
-      throw new Error(
-        `Vulnerability gate failed: ${blocked} HIGH/CRITICAL package findings`,
-      );
+    checkVulnerabilities(report);
   } finally {
     rmSync(temp, { recursive: true });
   }

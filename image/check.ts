@@ -1,5 +1,20 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import {
+  installedPackages,
+  packagePins,
+  verifyPackageInventory,
+} from "./packages.ts";
+
+verifyPackageInventory(
+  packagePins(
+    process.env.IMAGE_PROFILE === "browser" ||
+      process.argv.includes("--browser")
+      ? "browser"
+      : "base",
+  ),
+  installedPackages(),
+);
 
 for (const tool of [
   "mise",

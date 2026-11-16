@@ -1,0 +1,8 @@
+{
+  "name": "codex-container-image-tools",
+  "private": true,
+  "dependencies": {
+    "@openai/codex": "0.167.2",
+    "agent-browser": "0.43.0"
+  }
+}

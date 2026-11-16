@@ -3,3 +3,9 @@
 !mise.toml
 !image/
 !image/*.ts
+!image/artifacts.json
+!image/locks/
+!image/locks/**
+!image/tools/
+!image/tools/package.json
+!image/tools/pnpm-lock.yaml

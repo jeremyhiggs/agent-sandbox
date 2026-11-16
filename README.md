@@ -10,8 +10,8 @@ there is no compilation step or Python tooling requirement.
 
 Use an Apple silicon Mac supported by Apple's container runtime. Install mise and
 host `hc` first. The required `hc` version is recorded as `IMAGE_HC_VERSION` in
-`mise.toml`; use that version on the host too. The image installer downloads its
-Linux build and verifies the release manifest's SHA-256 checksum.
+`mise.toml`; use that version on the host too. The image installer verifies its
+Linux archive against the SHA-256 checksum in `image/artifacts.json`.
 
 ```sh
 mise trust
@@ -26,18 +26,18 @@ mise run smoke
 ```
 
 `mise.toml` pins host tooling and image tool versions. The Apple runtime is a
-macOS-only mise dependency. Distribution packages are listed in `Dockerfile` and
-upgraded during uncached builds. Wolfi's base is digest-pinned in `mise.toml`;
-update that pin when refreshing the base. `pnpm-lock.yaml` locks the development
-type definitions and their dependencies. Mise bootstraps pnpm using its embedded
-package installer, then uses pnpm for the other JavaScript tools. The `npm:` mise
-backend name denotes the package registry; it does not require npm in the image.
+macOS-only mise dependency. All base images have digest pins. Complete OS package
+locks live under `image/locks/`, for both distributions, profiles, and architectures.
+Normal builds install exact versions and check the installed inventory. CLI
+archives have checksum pins, and image tools use a frozen pnpm lockfile. See
+[reproducible dependencies](docs/reproducibility.md) for the lock files and refresh tasks.
 
-If guest DNS cannot resolve public names, select a resolver explicitly:
+Apple builds and guests use `1.1.1.1` as their default DNS resolver. To select
+another resolver:
 
 ```sh
-mise run build --dns 1.1.1.1
-CONTAINER_DNS=1.1.1.1 mise run smoke
+mise run build --dns 8.8.8.8
+CONTAINER_DNS=8.8.8.8 mise run smoke
 ```
 
 This changes DNS for those guests, without changing the Mac's DNS settings.
@@ -192,9 +192,10 @@ Or install the pinned browser and its runtime libraries in a running guest:
 mise run browser cs-feature
 ```
 
-The installer verifies the architecture-specific download checksum and requires
-the pinned version to match Google's current stable release. Update the version
-and both checksums in `mise.toml` when that gate fails. The installed browser is
+The installer verifies the architecture-specific download checksum and uses the
+pinned version. The separate `audit:browser` check compares that pin with Google's
+current stable release. This keeps old pinned builds reproducible while making
+outdated browser pins fail the security audit. The installed browser is
 discoverable as `google-chrome`; its provenance is recorded in
 `/opt/chrome/vendor-release.json`. A guest installation disappears on teardown.
 No host browser or browser profile is mounted.
@@ -242,7 +243,7 @@ mise run smoke
 ```
 
 `check` runs Biome, TypeScript checking, Prettier, Markdownlint, Taplo, Hadolint,
-Actionlint, and Node's unit tests. `smoke` uses fake Codex state and a disposable
+Actionlint, lock validation, and Node's unit tests. `smoke` uses fake Codex state and a disposable
 linked worktree. It checks tool availability, skill symlinks, Git writes visible
 on the host, a host file outside the mounts being absent, host `hc` reading a
 guest terminal, and registration/VM teardown. It does not send a model request.
@@ -252,7 +253,13 @@ Docker, for both core and browser variants. Each image runs the core tool check
 and Trivy scan; browser variants also exercise agent-browser against Chrome.
 `build:ci`, `check:image:ci`, and `scan:ci` are the named Docker equivalents.
 The Apple VM and host `hc` integration test runs locally on macOS, separately
-from the Linux CI checks. CI also runs weekly to pick up new advisories.
+from the Linux CI checks. CI runs on pushes, pull requests, manual requests,
+and every day at **00:00 UTC** to pick up new advisories.
+
+`mise run audit` runs four independent checks: pnpm audits of the repository and
+image-tool lockfiles, a Trivy repository scan including development dependencies,
+and browser freshness. The image matrix also scans each built image with Trivy.
+There are no automated dependency update PRs.
 
 Trivy scans OS and discoverable language dependencies and writes the complete
 report, including unfixed and lower-severity vulnerabilities, to

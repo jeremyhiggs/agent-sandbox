@@ -12,7 +12,7 @@ actionlint = "1.7.12"
 container = { version = "1.7.1", os = ["macos"] }
 
 # Image dependencies are passed to Dockerfile by scripts/sandbox.ts build.
-# Distribution packages are declared in Dockerfile and updated on each build.
+# OS dependencies and CLI archives have committed locks; refresh explicitly.
 [env]
 IMAGE_MISE_VERSION = "2026.11.7"
 IMAGE_NODE_VERSION = "24.22.3"
@@ -21,6 +21,9 @@ IMAGE_BROWSER_VERSION = "157.0.8103.78"
 IMAGE_BROWSER_SHA256_ARM64 = "f354d666822a11d8fe99e923c44be77dd226fab2750c5b5947e6318818bf10f1"
 IMAGE_BROWSER_SHA256_AMD64 = "9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb"
 IMAGE_WOLFI_BASE = "cgr.dev/chainguard/wolfi-base:latest@sha256:833c48f1faf32c90e6f9501a2410a9aa28ceb2c594102edd4470053c30efa089"
+IMAGE_DEBIAN_BASE = "debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2"
+IMAGE_NODE_BASE = "node:24.22.3-trixie-slim@sha256:af02d57b57719b9657a45199a79264a9437940cd55b3c7b3fc99615654f124a0"
+IMAGE_MISE_BASE = "ghcr.io/jdx/mise:2026.11.7@sha256:36a8408d3398aff30a761b4ae57f71f50942d64f4e7ecd5353ffaee7ec4fa63a"
 IMAGE_CODEX_VERSION = "0.167.2"
 IMAGE_AGENT_BROWSER_VERSION = "0.43.0"
 IMAGE_HC_VERSION = "0.1.20"
@@ -50,7 +53,7 @@ run = [
 run = "node --test tests/*.test.ts"
 
 [tasks.check]
-depends = ["lint", "test"]
+depends = ["lint", "test", "lock:check"]
 
 [tasks.build]
 description = "Build the Apple container image"
@@ -109,8 +112,20 @@ description = "Test the browser-free core image using Docker (Linux CI)"
 run = "docker run --rm codex-sandbox:local node /opt/codex-container/check.ts"
 
 [tasks.audit]
-description = "Scan the locked development dependencies"
+description = "Audit repository/image Node packages, repository dependencies, and browser freshness"
+depends = ["audit:node", "audit:tools", "audit:repo", "audit:browser"]
+
+[tasks."audit:node"]
 run = "pnpm audit --audit-level=high"
+
+[tasks."audit:tools"]
+run = "pnpm --dir image/tools audit --audit-level=high"
+
+[tasks."audit:repo"]
+run = "node scripts/security.ts repo"
+
+[tasks."audit:browser"]
+run = "node scripts/security.ts browser"
 
 [tasks."build:browser"]
 description = "Build the optional current Chrome for Testing image"
@@ -135,3 +150,18 @@ run = "container run --rm codex-sandbox:browser node /opt/codex-container/check.
 [tasks.browser]
 description = "Install pinned Chrome and its runtime libraries in an existing guest (pass cs-NAME)"
 run = "node scripts/sandbox.ts browser"
+
+[tasks."lock:update"]
+description = "Resolve complete OS package locks for both distros and architectures"
+run = "node scripts/lock-packages.ts"
+
+[tasks."lock:tools"]
+description = "Refresh CLI archive checksums and the image's pnpm dependency lock"
+run = "node scripts/lock-tools.ts"
+
+[tasks."lock:check"]
+description = "Validate package locks, base digests, and CLI version pins"
+run = [
+  "node scripts/check-locks.ts",
+  "pnpm --dir image/tools install --lockfile-only --frozen-lockfile --ignore-scripts",
+]

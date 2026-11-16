@@ -14,7 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { IMAGE, run, start, stop } from "./sandbox.ts";
+import { DEFAULT_DNS, IMAGE, run, start, stop } from "./sandbox.ts";
 
 const { values } = parseArgs({
   options: {
@@ -70,6 +70,7 @@ try {
   const probe = `
     const fs = require('node:fs');
     const assert = require('node:assert/strict');
+    assert.ok(fs.readFileSync('/etc/resolv.conf', 'utf8').includes('nameserver ' + ${JSON.stringify(DEFAULT_DNS)}));
     assert.equal(fs.existsSync(${JSON.stringify(sentinel)}), false);
     assert.match(fs.readFileSync(${JSON.stringify(join(home, ".agents", "skills", "example", "REFERENCE.md"))}, 'utf8'), /External file skill/);
     assert.match(fs.readFileSync(${JSON.stringify(join(home, ".codex", "skills", "example", "SKILL.md"))}, 'utf8'), /Smoke skill/);

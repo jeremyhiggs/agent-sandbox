@@ -11,7 +11,7 @@ The local arm64 results from 16 November 2026 are:
 
 | Property                     | Wolfi  | Debian 13 slim                             |
 | ---------------------------- | ------ | ------------------------------------------ |
-| Compressed image data        | 363 MB | 402 MB                                     |
+| Compressed image data        | 350 MB | 389 MB                                     |
 | Trivy HIGH/CRITICAL findings | 0      | 128                                        |
 | OpenSSH client               | 10.6p2 | Debian 10.0 package line                   |
 | Required agent tools         | Passed | Tools install, but SSH/security gates fail |
@@ -34,8 +34,9 @@ or its required system libraries. See [Chainguard's libc explanation](https://ww
 ## Mise support
 
 Mise works in the Wolfi image. It installs tools through its own backends rather
-than requiring every tool to exist in APK. The image build already uses mise for
-JJ, pnpm, Codex, and agent-browser. See [mise backends](https://mise.jdx.dev/dev-tools/backends/).
+than requiring every tool to exist in APK. Image tool versions are declared in
+`mise.toml`. The image build uses checksum-locked CLI archives and frozen pnpm
+dependencies. Guest repositories can use [mise backends](https://mise.jdx.dev/dev-tools/backends/) normally.
 
 A fresh guest also passed a repository-config probe with mise 2026.11.7:
 
@@ -137,9 +138,12 @@ versions change, so the counts above are a dated snapshot.
   Removing them from the shared image moves installation to the repo config.
 - A required package can be absent or have a different library layout.
   The catalogue size does not prove compatibility with a particular repo.
-- Builds refresh APK packages, so transitive versions can change. The base-image
-  digest alone does not freeze the environment. Image checks cover the included
-  tools, not every repository config.
+- Normal builds use exact OS package locks, including transitive dependencies.
+  Refresh tasks deliberately resolve new versions. Image checks compare the
+  installed package inventory against the lock, but do not cover every repository config.
+- Rebuilding requires the pinned archives to remain available. A removed package
+  makes the build fail rather than select a newer version. Long-term retention
+  requires an archive cache or mirror. See [reproducible dependencies](reproducibility.md).
 - Wolfi and Alpine use the APK format, but their packages cannot be mixed.
   An Alpine repository is not a fallback for a missing Wolfi package.
 - A clean scan covers the scanner's inventory and advisory feeds. It does not

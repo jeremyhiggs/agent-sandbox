@@ -11,6 +11,12 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import {
+  installBrowserPackages,
+  installedPackages,
+  packagePins,
+  verifyPackageInventory,
+} from "./packages.ts";
 
 function run(command: string, args: string[]) {
   execFileSync(command, args, { stdio: "inherit" });
@@ -26,20 +32,8 @@ const expected =
   ];
 if (!expected || !/^[a-f0-9]{64}$/.test(expected))
   throw new Error("BROWSER_SHA256 must be pinned for this architecture");
-const response = await fetch(
-  "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
-);
-if (!response.ok)
-  throw new Error(`Browser release metadata: HTTP ${response.status}`);
-const metadata = (await response.json()) as {
-  channels: { Stable: { version: string } };
-};
-if (metadata.channels.Stable.version !== version)
-  throw new Error(
-    `Browser pin ${version} is behind vendor stable ${metadata.channels.Stable.version}; update mise.toml`,
-  );
-
 function activate() {
+  verifyPackageInventory(packagePins("browser"), installedPackages(), false);
   if (!existsSync("/usr/local/bin/google-chrome"))
     symlinkSync("/opt/chrome/chrome", "/usr/local/bin/google-chrome");
   run("/opt/chrome/chrome", ["--version"]);
@@ -61,57 +55,7 @@ if (existsSync("/opt/chrome")) {
   process.exit(0);
 }
 
-if (existsSync("/sbin/apk")) {
-  run("apk", [
-    "add",
-    "--no-cache",
-    "alsa-lib",
-    "at-spi2-core",
-    "cairo",
-    "cups-libs",
-    "font-liberation",
-    "glib",
-    "libatk-1.0",
-    "libatk-bridge-2.0",
-    "libdrm",
-    "libx11",
-    "libxcb",
-    "libxcomposite",
-    "libxdamage",
-    "libxext",
-    "libxfixes",
-    "libxkbcommon",
-    "libxrandr",
-    "mesa-gbm",
-    "libnspr",
-    "libnss",
-    "libudev",
-    "pango",
-  ]);
-} else {
-  run("apt-get", ["update"]);
-  run("apt-get", [
-    "install",
-    "-y",
-    "--no-install-recommends",
-    "fonts-liberation",
-    "libasound2t64",
-    "libatk-bridge2.0-0t64",
-    "libatspi2.0-0t64",
-    "libcups2t64",
-    "libdrm2",
-    "libgbm1",
-    "libnss3",
-    "libudev1",
-    "libx11-xcb1",
-    "libxcomposite1",
-    "libxdamage1",
-    "libxfixes3",
-    "libxkbcommon0",
-    "libxrandr2",
-  ]);
-  rmSync("/var/lib/apt/lists", { recursive: true });
-}
+installBrowserPackages();
 const url = `https://storage.googleapis.com/chrome-for-testing-public/${version}/${platform}/chrome-${platform}.zip`;
 const download = await fetch(url);
 if (!download.ok) throw new Error(`Browser download: HTTP ${download.status}`);
