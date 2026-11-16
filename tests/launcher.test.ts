@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   mountPlan,
+  parseCommand,
   parseOptions,
   repositoryMounts,
   withSymlinkTargets,
@@ -206,4 +207,18 @@ test("Codex arguments survive mise consuming the option separator", () => {
       extra: ["--model", "model-name", "--version"],
     },
   );
+});
+
+test("CLI launches Codex by default and retains management commands and help", () => {
+  for (const args of [
+    [],
+    ["--checkout", "/work", "--model", "model-name"],
+    ["--", "status"],
+  ])
+    assert.deepEqual(parseCommand(args), { command: "run", args });
+  assert.deepEqual(parseCommand(["stop", "cs-test"]), {
+    command: "stop",
+    args: ["cs-test"],
+  });
+  assert.deepEqual(parseCommand(["--help"]), { command: "--help", args: [] });
 });

@@ -61,11 +61,11 @@ Installation is repeatable and refuses to overwrite a different existing command
 From any existing checkout or linked worktree:
 
 ```sh
-codex-container codex
+codex-container
 ```
 
 It selects the current checkout by default. You can also use
-`codex-container codex --checkout /path/to/worktree`, or the `build`, `scan`,
+`codex-container --checkout /path/to/worktree`, or the `build`, `scan`,
 `start`, `stop`, `shell`, `attach`, `browser`, and `status` subcommands. Repo-local
 mise tasks remain available. Run `mise run smoke:cli` to test the installed
 command's worktree selection, mount boundaries, hc registration, and cleanup.
@@ -74,37 +74,47 @@ remove it afterward; they do not register guests in your normal Herdr core.
 
 ## Run Codex
 
-From this repository, select an existing checkout or linked worktree:
+From an existing checkout or linked worktree, run:
 
 ```sh
-mise run codex --checkout /path/to/worktree
+codex-container
 ```
 
-This creates a guest, registers it temporarily with host `hc`, starts Codex in a
-guest-core terminal, and attaches your terminal. Codex uses `--no-daemon` and
-`--dangerously-bypass-approvals-and-sandbox`. The VM provides the filesystem
-boundary. When the attachment ends, including detaching with Ctrl+backslash,
-the launcher unregisters and destroys the guest. Files in mounted directories
-remain on the host.
+You can run this command in any terminal, including a Herdr tab. It selects the
+current checkout and creates a disposable guest. It registers the guest with host
+`hc`, starts Codex, and attaches your terminal. Codex uses `--no-daemon` and
+`--dangerously-bypass-approvals-and-sandbox` inside the VM.
 
-Put guest options first, then Codex arguments:
+To select another checkout or worktree, run:
 
 ```sh
-mise run codex --checkout /path/to/worktree --model gpt-6.1
+codex-container --checkout /path/to/worktree
 ```
 
-The default guest has four CPUs and 4 GB of memory. Override these with `--cpus`
-and `--memory`. `--dns` and `--image` are also available. `--home` selects a home
-containing `.codex` and `.agents/skills`; it never mounts the whole home.
+Put guest options before `--`. Put a Codex task or Codex arguments after `--`:
+
+```sh
+codex-container -- "Run the tests and fix failures"
+codex-container --cpus 6 --memory 8G -- "Review the current changes"
+```
+
+The default guest has four CPUs and 4 GB of memory. `--dns` and `--image` select
+the resolver and image. `--home` selects a home containing `.codex` and
+`.agents/skills`; it does not mount the whole home.
+
+Exit Codex to stop and destroy the guest. Detaching with Ctrl+backslash also
+destroys it. Your checkout changes and mounted Codex state remain on the host.
+Run `codex-container --help` for the launcher options. Repo-local tasks such as
+`mise run codex --checkout /path/to/worktree` remain available.
 
 ## Keep a guest running
 
 For work that must survive detaching, start a guest explicitly:
 
 ```sh
-mise run start --checkout /path/to/worktree --name cs-feature
-mise run shell cs-feature
-mise run status
+codex-container start --name cs-feature
+codex-container shell cs-feature
+codex-container status
 ```
 
 Inside that shell, launch a guest-core terminal:
@@ -118,10 +128,10 @@ hc run --bg --name codex -- codex --no-daemon \
 On the host:
 
 ```sh
-mise run attach cs-feature
+codex-container attach cs-feature
 hc ls
 hc read cs-feature/codex
-mise run stop cs-feature
+codex-container stop cs-feature
 ```
 
 The guest stays alive until `stop`. A forced launcher kill or Mac shutdown can

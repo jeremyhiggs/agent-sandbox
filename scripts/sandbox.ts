@@ -481,9 +481,29 @@ export function parseOptions(command: string, args: string[]) {
   return { values: { ...values }, extra };
 }
 
+export function parseCommand(argv: string[]) {
+  const [first, ...rest] = argv;
+  if (
+    [
+      "build",
+      "scan",
+      "start",
+      "run",
+      "codex",
+      "stop",
+      "shell",
+      "attach",
+      "browser",
+      "status",
+      "--help",
+    ].includes(first)
+  )
+    return { command: first === "codex" ? "run" : first, args: rest };
+  return { command: "run", args: argv };
+}
+
 async function main(): Promise<void> {
-  const [requested, ...args] = process.argv.slice(2);
-  const command = requested === "codex" ? "run" : requested;
+  const { command, args } = parseCommand(process.argv.slice(2));
   if (command === "browser") {
     execFileSync(
       "container",
@@ -516,11 +536,10 @@ async function main(): Promise<void> {
     stop(args[0]);
     return;
   }
-  if (!["build", "scan", "start", "run"].includes(command)) {
+  if (command === "--help") {
     console.log(
-      "Usage: codex-container <build|scan|start|codex|stop|shell|attach|browser|status> [options]\nOptions: --checkout PATH --name cs-NAME --home PATH --image TAG --dns IP --cpus N --memory 4G\nBuild: --variant base|browser\nCodex arguments follow --. Stop/shell/attach/browser take a guest name.",
+      "Usage: codex-container [guest options] [-- Codex arguments]\nLaunches Codex in a disposable guest using the current checkout.\nCommands: build, scan, start, stop, shell, attach, browser, status\nGuest options: --checkout PATH --name cs-NAME --home PATH --image TAG --dns IP --cpus N --memory 4G\nBuild: --variant base|browser\nPut guest options before Codex arguments. Stop/shell/attach/browser take a guest name.",
     );
-    if (command && command !== "--help") process.exitCode = 1;
     return;
   }
   const { values, extra } = parseOptions(command, args);

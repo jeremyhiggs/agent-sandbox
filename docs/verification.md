@@ -116,7 +116,10 @@ uses a fresh `HC_SESSION`, scratch XDG configuration/state, and a short socket
 path suitable for macOS. It passed the worktree, skills, isolation, registration,
 terminal-output, and teardown checks, then stopped its own core and removed the
 scratch state. It does not alter the normal core's machine registrations or UI.
-All 20 unit tests and lint/type/lock checks passed too.
+The installed CLI also passed a default launch without a subcommand. It ran the
+guest's Codex with `--version`, returned successfully, and removed that guest and
+registration. This check uses a terminal rather than a pipe because `hc attach`
+requires a terminal. All 21 unit tests and lint/type/lock checks passed too.
 
 ## Scan coverage and CI limits
 

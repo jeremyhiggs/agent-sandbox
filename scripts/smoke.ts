@@ -153,6 +153,24 @@ try {
   const name = guest;
   stopGuest(name);
   guest = undefined;
+  let defaultGuest: string | undefined;
+  if (values.cli) {
+    defaultGuest = `${name}-default`;
+    execFileSync(
+      values.cli,
+      [
+        "--name",
+        defaultGuest,
+        "--home",
+        home,
+        "--image",
+        values.image!,
+        "--",
+        "--version",
+      ],
+      { cwd: work, stdio: "inherit" },
+    );
+  }
   assert.equal(
     readFileSync(join(work, "from-guest.txt"), "utf8"),
     "shared checkout\n",
@@ -165,7 +183,8 @@ try {
   const machines = JSON.parse(run("hc", ["machine", "ls", "--json"]));
   assert.equal(
     machines.machines.some(
-      (machine: { name: string }) => machine.name === name,
+      (machine: { name: string }) =>
+        machine.name === name || machine.name === defaultGuest,
     ),
     false,
   );
@@ -175,7 +194,8 @@ try {
   assert.equal(
     containers.some(
       (item: { configuration: { id: string } }) =>
-        item.configuration.id === name,
+        item.configuration.id === name ||
+        item.configuration.id === defaultGuest,
     ),
     false,
   );
