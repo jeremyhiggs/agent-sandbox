@@ -1,5 +1,6 @@
 [tools]
 node = "24.22.3"
+pnpm = "11.28.12"
 biome = "2.6.7"
 "npm:typescript" = "7.0.2"
 "npm:prettier" = "3.10.1"
@@ -15,7 +16,11 @@ container = { version = "1.7.1", os = ["macos"] }
 [env]
 IMAGE_MISE_VERSION = "2026.11.7"
 IMAGE_NODE_VERSION = "24.22.3"
-IMAGE_NPM_VERSION = "12.2.2"
+IMAGE_PNPM_VERSION = "11.28.12"
+IMAGE_BROWSER_VERSION = "157.0.8103.78"
+IMAGE_BROWSER_SHA256_ARM64 = "f354d666822a11d8fe99e923c44be77dd226fab2750c5b5947e6318818bf10f1"
+IMAGE_BROWSER_SHA256_AMD64 = "9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb"
+IMAGE_WOLFI_BASE = "cgr.dev/chainguard/wolfi-base:latest@sha256:833c48f1faf32c90e6f9501a2410a9aa28ceb2c594102edd4470053c30efa089"
 IMAGE_CODEX_VERSION = "0.167.2"
 IMAGE_AGENT_BROWSER_VERSION = "0.43.0"
 IMAGE_HC_VERSION = "0.1.20"
@@ -56,12 +61,12 @@ description = "Export and scan the Apple image; fail on HIGH or CRITICAL CVEs"
 run = "node scripts/sandbox.ts scan"
 
 [tasks.smoke]
-description = "Exercise a disposable worktree, guest, browser, and host hc registration"
+description = "Exercise a disposable worktree, guest tools, and host hc registration"
 run = "node scripts/smoke.ts"
 
 [tasks.setup]
 description = "Install the locked Node type definitions"
-run = "npm ci --ignore-scripts"
+run = "pnpm install --frozen-lockfile --ignore-scripts"
 
 [tasks.start]
 description = "Start a guest and register it with host hc (--checkout PATH --name cs-NAME)"
@@ -96,13 +101,37 @@ description = "Scan the Docker image (Linux CI)"
 run = "node scripts/sandbox.ts scan --engine docker"
 
 [tasks."check:image"]
-description = "Test tools and real Chromium in an unmounted Apple guest"
+description = "Test the browser-free core image"
 run = "container run --rm codex-sandbox:local node /opt/codex-container/check.ts"
 
 [tasks."check:image:ci"]
-description = "Test tools and real Chromium using Docker (Linux CI)"
+description = "Test the browser-free core image using Docker (Linux CI)"
 run = "docker run --rm codex-sandbox:local node /opt/codex-container/check.ts"
 
 [tasks.audit]
 description = "Scan the locked development dependencies"
-run = "npm audit --audit-level=high"
+run = "pnpm audit --audit-level=high"
+
+[tasks."build:browser"]
+description = "Build the optional current Chrome for Testing image"
+run = "node scripts/sandbox.ts build --variant browser --image codex-sandbox:browser"
+
+[tasks."build:debian"]
+description = "Build the Debian slim comparison image"
+run = "node scripts/sandbox.ts build --distro debian --image codex-sandbox:debian"
+
+[tasks."scan:browser"]
+run = "node scripts/sandbox.ts scan --image codex-sandbox:browser"
+
+[tasks."scan:debian"]
+run = "node scripts/sandbox.ts scan --image codex-sandbox:debian"
+
+[tasks."smoke:browser"]
+run = "node scripts/smoke.ts --image codex-sandbox:browser --browser"
+
+[tasks."check:browser"]
+run = "container run --rm codex-sandbox:browser node /opt/codex-container/check.ts --browser"
+
+[tasks.browser]
+description = "Install pinned Chrome and its runtime libraries in an existing guest (pass cs-NAME)"
+run = "node scripts/sandbox.ts browser"

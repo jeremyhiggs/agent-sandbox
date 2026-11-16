@@ -313,12 +313,40 @@ export function stop(name: string): void {
   }
 }
 
-function build(engine: string, image: string, dns?: string): void {
-  const args = ["build", "--pull", "--tag", image];
+function build(options: Record<string, string | undefined>): void {
+  const engine = options.engine ?? "container";
+  const distro = options.distro ?? "wolfi",
+    variant = options.variant ?? "base";
+  if (
+    !["wolfi", "debian"].includes(distro) ||
+    !["base", "browser"].includes(variant)
+  )
+    throw new Error("Use --distro wolfi|debian and --variant base|browser");
+  const args = [
+    "build",
+    "--pull",
+    "--no-cache",
+    "--tag",
+    options.image ?? IMAGE,
+    "--target",
+    variant,
+    "--build-arg",
+    `DISTRO=${distro}`,
+  ];
+  for (const name of [
+    "WOLFI_BASE",
+    "BROWSER_SHA256_ARM64",
+    "BROWSER_SHA256_AMD64",
+  ]) {
+    const value = process.env[`IMAGE_${name}`];
+    if (!value) throw new Error(`Missing IMAGE_${name}; run through mise`);
+    args.push("--build-arg", `${name}=${value}`);
+  }
   for (const name of [
     "MISE",
     "NODE",
-    "NPM",
+    "PNPM",
+    "BROWSER",
     "CODEX",
     "AGENT_BROWSER",
     "HC",
@@ -331,10 +359,10 @@ function build(engine: string, image: string, dns?: string): void {
       );
     args.push("--build-arg", `${name}_VERSION=${value}`);
   }
-  if (dns) {
+  if (options.dns) {
     if (engine !== "container")
       throw new Error("Build --dns is supported only by Apple's runtime");
-    args.push("--dns", dns);
+    args.push("--dns", options.dns);
   }
   execFileSync(engine, [...args, ROOT], { stdio: "inherit" });
 }
@@ -354,7 +382,10 @@ function scan(engine: string, image: string): void {
       run("tar", ["-xf", archive, "-C", input]);
       rmSync(archive);
     }
-    const report = join(artifacts, "vulnerabilities.json");
+    const report = join(
+      artifacts,
+      `vulnerabilities-${image.replace(/[^a-zA-Z0-9_-]/g, "-")}.json`,
+    );
     run("trivy", [
       "image",
       "--input",
@@ -464,6 +495,8 @@ export function parseOptions(command: string, args: string[]) {
     "cpus",
     "memory",
     "dns",
+    "distro",
+    "variant",
   ];
   let split = args.indexOf("--");
   if (command === "run" && split < 0) {
@@ -490,6 +523,14 @@ export function parseOptions(command: string, args: string[]) {
 
 async function main(): Promise<void> {
   const [command, ...args] = process.argv.slice(2);
+  if (command === "browser") {
+    execFileSync(
+      "container",
+      ["exec", requireName(args[0]), "node", "/opt/codex-container/browser.ts"],
+      { stdio: "inherit" },
+    );
+    return;
+  }
   if (command === "status") {
     const containers = JSON.parse(
       run("container", ["ls", "--all", "--format", "json"]),
@@ -516,7 +557,7 @@ async function main(): Promise<void> {
   }
   if (!["build", "scan", "start", "run"].includes(command)) {
     console.log(
-      "Usage: mise run <build|scan|start|codex|stop|shell|attach|status> [options]\nOptions: --checkout PATH --name cs-NAME --home PATH --image TAG --dns IP --cpus N --memory 4G\nCodex arguments follow --. Stop/shell/attach take a guest name.",
+      "Usage: mise run <build|scan|start|codex|stop|shell|attach|browser|status> [options]\nOptions: --checkout PATH --name cs-NAME --home PATH --image TAG --dns IP --cpus N --memory 4G\nBuild: --distro wolfi|debian --variant base|browser\nCodex arguments follow --. Stop/shell/attach/browser take a guest name.",
     );
     if (command && command !== "--help") process.exitCode = 1;
     return;
@@ -526,7 +567,7 @@ async function main(): Promise<void> {
   if (!["container", "docker"].includes(engine))
     throw new Error("Engine must be container or docker");
   if (command === "build") {
-    build(engine, values.image ?? IMAGE, values.dns);
+    build(values);
     return;
   }
   if (command === "scan") {

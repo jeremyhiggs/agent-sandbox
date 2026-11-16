@@ -1,8 +1,9 @@
 # Codex container
 
 Run Codex in a disposable Linux VM using Apple's `container` runtime. The image
-contains Debian 13, Node, mise, Codex CLI, agent-browser, Chromium, Git, Git LFS,
-Jujutsu, and Herdr's `hc`. Scripts are TypeScript executed directly by Node;
+contains Wolfi Linux, Node, pnpm, mise, Codex CLI, agent-browser, Git, Git LFS,
+Jujutsu, and Herdr's `hc`. The default image has no browser engine, npm, npx,
+compiler, development headers, or make. Scripts are TypeScript executed directly by Node;
 there is no compilation step or Python tooling requirement.
 
 ## Setup
@@ -25,9 +26,12 @@ mise run smoke
 ```
 
 `mise.toml` pins host tooling and image tool versions. The Apple runtime is a
-macOS-only mise dependency. Debian packages are listed in `Dockerfile` and are
-upgraded during builds; builds pull updated base images. `package-lock.json`
-locks the development type definitions and their dependencies.
+macOS-only mise dependency. Distribution packages are listed in `Dockerfile` and
+upgraded during uncached builds. Wolfi's base is digest-pinned in `mise.toml`;
+update that pin when refreshing the base. `pnpm-lock.yaml` locks the development
+type definitions and their dependencies. Mise bootstraps pnpm using its embedded
+package installer, then uses pnpm for the other JavaScript tools. The `npm:` mise
+backend name denotes the package registry; it does not require npm in the image.
 
 If guest DNS cannot resolve public names, select a resolver explicitly:
 
@@ -151,8 +155,66 @@ manages guest processes and starts with no host machine connections.
 Repository configs are available through the checkout mount. In a guest shell,
 review and trust the repo config, then run `mise install` and the repo's tasks.
 Tool downloads and caches live on the guest disk and disappear on teardown.
-This initial image contains the common toolchain; it does not automatically
+The image contains the common runtime tools; it does not automatically
 trust every mounted config or bake arbitrary repository setup hooks into it.
+
+Install repository-specific build tools inside the guest. For example,
+`apk add --no-cache build-base` installs Wolfi's compiler and make; install
+additional headers as the repository needs them. Mise can install language
+toolchains, while distribution packages supply their required system libraries.
+These changes disappear with the guest. For repeated use, add a derived image
+instead of expanding the shared default image.
+
+## Optional browser
+
+Codex and `hc` do not need Chromium. Agent-browser is the automation CLI; it
+needs a browser engine for browser commands. It remains in the default image
+without the browser engine.
+
+Build and test a separate image with current Chrome for Testing:
+
+```sh
+mise run build:browser
+mise run check:browser
+mise run scan:browser
+mise run smoke:browser
+mise run codex --image codex-sandbox:browser --checkout /path/to/worktree
+```
+
+Or install the pinned browser and its runtime libraries in a running guest:
+
+```sh
+mise run browser cs-feature
+```
+
+The installer verifies the architecture-specific download checksum and requires
+the pinned version to match Google's current stable release. Update the version
+and both checksums in `mise.toml` when that gate fails. The installed browser is
+discoverable as `google-chrome`; its provenance is recorded in
+`/opt/chrome/vendor-release.json`. A guest installation disappears on teardown.
+No host browser or browser profile is mounted.
+
+## Wolfi and Debian slim
+
+Wolfi uses glibc, which supports the downloaded Linux builds of Codex, hc, JJ,
+and agent-browser. It uses `apk`, has different package names from Debian, and
+has a smaller package catalogue. Repository scripts that assume `apt`, Debian
+package names, or Debian-specific library layouts need changes. A mise config
+does not remove those system-package assumptions. Some base utilities are
+BusyBox variants; install GNU equivalents if a repo needs GNU-specific flags.
+
+The Dockerfile also supports a trimmed Debian 13 slim comparison:
+
+```sh
+mise run build:debian
+mise run scan:debian
+```
+
+Debian slim remains useful for repos tied to Debian packages. The initial image
+already used a slim base; removing the bundled browser and build tools accounts
+for much of the reduction. The current Debian comparison still fails the
+security gate and minimum OpenSSH check, so Wolfi is the default. See
+[verification](docs/verification.md) for measured results and compatibility checks.
 
 ## Checks and CI
 
@@ -169,22 +231,26 @@ mise run smoke
 
 `check` runs Biome, TypeScript checking, Prettier, Markdownlint, Taplo, Hadolint,
 Actionlint, and Node's unit tests. `smoke` uses fake Codex state and a disposable
-linked worktree. It checks actual Chromium, skill symlinks, Git writes visible
+linked worktree. It checks tool availability, skill symlinks, Git writes visible
 on the host, a host file outside the mounts being absent, host `hc` reading a
 guest terminal, and registration/VM teardown. It does not send a model request.
 
 GitHub Actions runs lint/tests and builds both amd64 and arm64 Linux images with
-Docker. Each image runs the tool/browser check and Trivy vulnerability scan.
+Docker, for both core and browser variants. Each image runs the core tool check
+and Trivy scan; browser variants also exercise agent-browser against Chrome.
 `build:ci`, `check:image:ci`, and `scan:ci` are the named Docker equivalents.
 The Apple VM and host `hc` integration test runs locally on macOS, separately
 from the Linux CI checks. CI also runs weekly to pick up new advisories.
 
 Trivy scans OS and discoverable language dependencies and writes the complete
 report, including unfixed and lower-severity vulnerabilities, to
-`.artifacts/vulnerabilities.json`. The check fails on HIGH or CRITICAL findings;
+`.artifacts/vulnerabilities-<image-tag>.json`. The check fails on HIGH or CRITICAL findings;
 there is no blanket ignore-unfixed policy or suppression file. CI preserves
 the report even when the check fails. A clean report is limited to the scanner's
-supported package/binary inventories and current advisory database.
+supported package/binary inventories and current advisory database. Downloaded
+Chrome is not a distribution package: the vendor version/checksum/freshness
+checks complement the scan, and a clean scan does not establish complete Chrome
+CVE coverage.
 
 ## Sources
 

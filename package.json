@@ -2,6 +2,7 @@
   "name": "codex-container",
   "private": true,
   "type": "module",
+  "packageManager": "pnpm@11.28.12",
   "engines": {
     "node": ">=24"
   },

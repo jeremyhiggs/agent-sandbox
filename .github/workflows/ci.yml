@@ -28,6 +28,7 @@ jobs:
       fail-fast: false
       matrix:
         runner: [ubuntu-24.04, ubuntu-24.04-arm]
+        variant: [base, browser]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
@@ -36,15 +37,18 @@ jobs:
         with:
           version: 2026.11.7
       - name: Build Linux image
-        run: mise run build:ci
-      - name: Check tools and real Chromium
+        run: mise run build:ci --variant ${{ matrix.variant }}
+      - name: Check npm-free core image
         run: mise run check:image:ci
+      - name: Test actual browser engine
+        if: matrix.variant == 'browser'
+        run: mise run check:image:ci --browser
       - name: Scan OS and language dependencies
         run: mise run scan:ci
       - name: Preserve complete vulnerability report
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: vulnerabilities-${{ matrix.runner }}
-          path: .artifacts/vulnerabilities.json
+          name: vulnerabilities-${{ matrix.runner }}-${{ matrix.variant }}
+          path: .artifacts/vulnerabilities-*.json
           if-no-files-found: ignore

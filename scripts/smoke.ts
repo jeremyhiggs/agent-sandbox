@@ -13,7 +13,15 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout } from "node:timers/promises";
-import { run, start, stop } from "./sandbox.ts";
+import { parseArgs } from "node:util";
+import { IMAGE, run, start, stop } from "./sandbox.ts";
+
+const { values } = parseArgs({
+  options: {
+    image: { type: "string", default: IMAGE },
+    browser: { type: "boolean", default: false },
+  },
+});
 
 // Fake Codex state makes this test independent of credentials and account access.
 const root = realpathSync(mkdtempSync(join(tmpdir(), "codex-smoke-")));
@@ -42,10 +50,21 @@ try {
   writeFileSync(sentinel, "not mounted");
   run("git", ["init", "-q", main]);
   run("git", ["-C", main, "worktree", "add", "--orphan", "-qb", "smoke", work]);
-  guest = start({ checkout: work, home, dns: process.env.CONTAINER_DNS }).name;
+  guest = start({
+    checkout: work,
+    home,
+    dns: process.env.CONTAINER_DNS,
+    image: values.image,
+  }).name;
   execFileSync(
     "container",
-    ["exec", guest, "node", "/opt/codex-container/check.ts"],
+    [
+      "exec",
+      guest,
+      "node",
+      "/opt/codex-container/check.ts",
+      ...(values.browser ? ["--browser"] : []),
+    ],
     { stdio: "inherit" },
   );
   const probe = `
@@ -131,7 +150,7 @@ try {
     false,
   );
   console.log(
-    "Worktree, skills, host isolation, hc registration, browser, and teardown passed",
+    "Worktree, skills, host isolation, hc registration, image checks, and teardown passed",
   );
 } finally {
   if (guest) stop(guest);
