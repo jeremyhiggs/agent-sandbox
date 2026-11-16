@@ -6,22 +6,14 @@ import {
   verifyPackageInventory,
 } from "./packages.ts";
 
-verifyPackageInventory(
-  packagePins(
-    process.env.IMAGE_PROFILE === "browser" ||
-      process.argv.includes("--browser")
-      ? "browser"
-      : "base",
-  ),
-  installedPackages(),
-);
+verifyPackageInventory(packagePins(), installedPackages());
 
 for (const tool of [
   "mise",
   "node",
   "pnpm",
   "git",
-  "codex",
+  "gh",
   "agent-browser",
   "hc",
   "jj",
@@ -44,9 +36,31 @@ assert.ok(
       (Number(version[1]) === 10 && Number(version[2]) >= 4)),
   `OpenSSH 10.4 or newer is required: ${ssh.stderr}`,
 );
-if (!process.argv.includes("--browser")) {
-  console.log("Core image checks passed; browser engine is optional");
-  process.exit(0);
+for (const agent of ["codex", "opencode", "claude"]) {
+  if (agent === process.env.IMAGE_AGENT) {
+    execFileSync(agent, ["--version"], { stdio: "inherit" });
+    const flags =
+      agent === "codex"
+        ? [
+            "--no-daemon",
+            "--dangerously-bypass-approvals-and-sandbox",
+            "-c",
+            'cli_auth_credentials_store="file"',
+          ]
+        : agent === "opencode"
+          ? ["--standalone"]
+          : [];
+    const help = execFileSync(agent, [...flags, "--help"], {
+      encoding: "utf8",
+    });
+    assert.ok(help.length > 0);
+    if (agent === "opencode") assert.ok(help.includes("--prompt"));
+  } else
+    assert.notEqual(
+      spawnSync("sh", ["-c", 'command -v "$1"', "check", agent]).status,
+      0,
+      `${agent} must only ship in its own image`,
+    );
 }
 try {
   execFileSync(

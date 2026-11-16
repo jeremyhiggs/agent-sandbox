@@ -51,27 +51,31 @@ for (const tool of ["JJ", "HC"]) {
   }
   lock[tool.toLowerCase()] = entries;
 }
-const tools = join(root, "tools");
-mkdirSync(tools, { recursive: true });
-writeFileSync(
-  join(tools, "package.json"),
-  `${JSON.stringify(
-    {
-      name: "codex-container-image-tools",
-      private: true,
-      dependencies: {
-        "@openai/codex": version("CODEX"),
-        "agent-browser": version("AGENT_BROWSER"),
+for (const [profile, dependency, variable] of [
+  ["base", "agent-browser", "AGENT_BROWSER"],
+  ["codex", "@openai/codex", "CODEX"],
+  ["opencode", "@opencode/cli", "OPENCODE"],
+  ["claude", "@anthropic-ai/claude-code", "CLAUDE"],
+]) {
+  const tools = join(root, "tools", profile);
+  mkdirSync(tools, { recursive: true });
+  writeFileSync(
+    join(tools, "package.json"),
+    JSON.stringify(
+      {
+        name: `agent-container-${profile}`,
+        private: true,
+        dependencies: { [dependency]: version(variable) },
       },
-    },
-    null,
-    2,
-  )}\n`,
-);
-execFileSync("pnpm", ["install", "--lockfile-only", "--ignore-scripts"], {
-  cwd: tools,
-  stdio: "inherit",
-});
+      null,
+      2,
+    ) + "\n",
+  );
+  execFileSync("pnpm", ["install", "--lockfile-only", "--ignore-scripts"], {
+    cwd: tools,
+    stdio: "inherit",
+  });
+}
 writeFileSync(
   join(root, "artifacts.json"),
   `${JSON.stringify(lock, null, 2)}\n`,

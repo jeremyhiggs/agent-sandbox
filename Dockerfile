@@ -8,7 +8,6 @@ ARG TARGETARCH
 COPY image/locks/wolfi/${TARGETARCH}/base.txt /tmp/packages.lock
 RUN xargs apk add --no-cache < /tmp/packages.lock && rm /tmp/packages.lock
 
-ARG CODEX_VERSION
 ARG PNPM_VERSION
 ARG AGENT_BROWSER_VERSION
 ARG HC_VERSION
@@ -23,14 +22,33 @@ ENV SHELL="/bin/bash" LANG="C.UTF-8" \
     BROWSER_VERSION="${BROWSER_VERSION}" \
     BROWSER_SHA256_ARM64="${BROWSER_SHA256_ARM64}" \
     BROWSER_SHA256_AMD64="${BROWSER_SHA256_AMD64}" \
-    AGENT_BROWSER_ARGS="--no-sandbox,--disable-dev-shm-usage"
-COPY image/*.ts image/artifacts.json /opt/codex-container/
-COPY image/locks/ /opt/codex-container/locks/
-COPY image/tools/package.json image/tools/pnpm-lock.yaml /opt/agent-tools/
-RUN node /opt/codex-container/install.ts
+    AGENT_BROWSER_ARGS="--no-sandbox,--disable-dev-shm-usage" \
+    AGENT_BROWSER_EXECUTABLE_PATH="/opt/chrome/chrome"
+COPY image/install.ts image/browser.ts image/packages.ts image/artifacts.json /opt/agent-container/
+COPY image/locks/ /opt/agent-container/locks/
+COPY image/tools/base/package.json image/tools/base/pnpm-lock.yaml /opt/tools/base/
+RUN node /opt/agent-container/install.ts && node /opt/agent-container/browser.ts
+COPY image/check.ts /opt/agent-container/
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sleep", "infinity"]
 
-FROM base AS browser
-RUN node /opt/codex-container/browser.ts
-ENV AGENT_BROWSER_EXECUTABLE_PATH="/opt/chrome/chrome" IMAGE_PROFILE="browser"
+FROM base AS agent
+COPY image/agent.ts /opt/agent-container/
+
+FROM agent AS codex
+ARG CODEX_VERSION
+COPY image/tools/codex/package.json image/tools/codex/pnpm-lock.yaml /opt/tools/codex/
+RUN node /opt/agent-container/agent.ts codex "${CODEX_VERSION}"
+ENV IMAGE_AGENT="codex"
+
+FROM agent AS opencode
+ARG OPENCODE_VERSION
+COPY image/tools/opencode/package.json image/tools/opencode/pnpm-lock.yaml /opt/tools/opencode/
+RUN node /opt/agent-container/agent.ts opencode "${OPENCODE_VERSION}"
+ENV IMAGE_AGENT="opencode"
+
+FROM agent AS claude
+ARG CLAUDE_VERSION
+COPY image/tools/claude/package.json image/tools/claude/pnpm-lock.yaml /opt/tools/claude/
+RUN node /opt/agent-container/agent.ts claude "${CLAUDE_VERSION}"
+ENV IMAGE_AGENT="claude"

@@ -12,7 +12,6 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  installBrowserPackages,
   installedPackages,
   packagePins,
   verifyPackageInventory,
@@ -33,7 +32,7 @@ const expected =
 if (!expected || !/^[a-f0-9]{64}$/.test(expected))
   throw new Error("BROWSER_SHA256 must be pinned for this architecture");
 function activate() {
-  verifyPackageInventory(packagePins("browser"), installedPackages(), false);
+  verifyPackageInventory(packagePins(), installedPackages(), false);
   if (!existsSync("/usr/local/bin/google-chrome"))
     symlinkSync("/opt/chrome/chrome", "/usr/local/bin/google-chrome");
   run("/opt/chrome/chrome", ["--version"]);
@@ -55,7 +54,7 @@ if (existsSync("/opt/chrome")) {
   process.exit(0);
 }
 
-installBrowserPackages();
+verifyPackageInventory(packagePins(), installedPackages(), false);
 const url = `https://storage.googleapis.com/chrome-for-testing-public/${version}/${platform}/chrome-${platform}.zip`;
 const download = await fetch(url);
 if (!download.ok) throw new Error(`Browser download: HTTP ${download.status}`);

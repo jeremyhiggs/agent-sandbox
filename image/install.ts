@@ -29,7 +29,7 @@ const locks = JSON.parse(
   jj: Release;
   hc: Release;
 };
-verifyPackageInventory(packagePins("base"), installedPackages());
+verifyPackageInventory(packagePins(), installedPackages());
 async function install(
   tool: "pnpm" | "jj" | "hc",
   destination: string,
@@ -68,34 +68,27 @@ symlinkSync("/opt/jj/jj", "/usr/local/bin/jj");
 await install("pnpm", "/opt/pnpm", ["--strip-components=1"]);
 symlinkSync("/opt/pnpm/bin/pnpm.cjs", "/usr/local/bin/pnpm");
 const manifest = JSON.parse(
-  readFileSync("/opt/agent-tools/package.json", "utf8"),
+  readFileSync("/opt/tools/base/package.json", "utf8"),
 ) as { dependencies: Record<string, string> };
-assert.equal(manifest.dependencies["@openai/codex"], process.env.CODEX_VERSION);
 assert.equal(
   manifest.dependencies["agent-browser"],
   process.env.AGENT_BROWSER_VERSION,
 );
 run("pnpm", [
   "--dir",
-  "/opt/agent-tools",
+  "/opt/tools/base",
   "install",
   "--frozen-lockfile",
   "--ignore-scripts",
 ]);
-for (const tool of ["codex", "agent-browser"])
+for (const tool of ["agent-browser"])
   symlinkSync(
-    "/opt/agent-tools/node_modules/.bin/" + tool,
+    "/opt/tools/base/node_modules/.bin/" + tool,
     "/usr/local/bin/" + tool,
   );
 await install("hc", "/usr/local/bin", ["herdr-core"]);
 symlinkSync("herdr-core", "/usr/local/bin/hc");
-for (const tool of [
-  "mise",
-  "node",
-  "pnpm",
-  "codex",
-  "agent-browser",
-  "hc",
-  "jj",
-])
+for (const tool of ["mise", "node", "pnpm", "agent-browser", "hc", "jj"])
   run(tool, ["--version"]);
+
+rmSync("/opt/pnpm-home/store", { recursive: true, force: true });

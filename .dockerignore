@@ -7,5 +7,6 @@
 !image/locks/
 !image/locks/**
 !image/tools/
-!image/tools/package.json
-!image/tools/pnpm-lock.yaml
+!image/tools/*/
+!image/tools/*/package.json
+!image/tools/*/pnpm-lock.yaml

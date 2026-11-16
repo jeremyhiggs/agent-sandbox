@@ -13,8 +13,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import {
   mountPlan,
-  parseCommand,
-  parseOptions,
+  parseInvocation,
   repositoryMounts,
   withSymlinkTargets,
 } from "../scripts/sandbox.ts";
@@ -85,7 +84,7 @@ test("agent skills remain read-only when Codex skills link to the same directory
     mkdirSync(join(root, ".codex"));
     mkdirSync(skills, { recursive: true });
     symlinkSync(skills, join(root, ".codex", "skills"));
-    assert.equal(mountPlan(work, root).get(skills), true);
+    assert.equal(mountPlan(work, root, "codex").get(skills), true);
   }));
 
 test("read-only skill aliases into Codex keep a read-only overlay", () =>
@@ -97,7 +96,7 @@ test("read-only skill aliases into Codex keep a read-only overlay", () =>
     mkdirSync(target, { recursive: true });
     mkdirSync(skills, { recursive: true });
     symlinkSync(target, join(skills, "example"));
-    assert.equal(mountPlan(work, root).get(target), true);
+    assert.equal(mountPlan(work, root, "codex").get(target), true);
   }));
 
 test("external writable state file links require a shared parent for atomic updates", () =>
@@ -113,7 +112,7 @@ test("external writable state file links require a shared parent for atomic upda
       writeFileSync(target, "fixture");
       symlinkSync(target, join(codex, name));
     }
-    assert.throws(() => mountPlan(work, root), /atomic updates/);
+    assert.throws(() => mountPlan(work, root, "codex"), /atomic updates/);
   }));
 
 test("a symlinked Codex home is rejected before creating writable aliases", () =>
@@ -123,7 +122,10 @@ test("a symlinked Codex home is rejected before creating writable aliases", () =
     mkdirSync(work);
     mkdirSync(target, { recursive: true });
     symlinkSync(target, join(root, ".codex"));
-    assert.throws(() => mountPlan(work, root), /Codex directory.*symlink/);
+    assert.throws(
+      () => mountPlan(work, root, "codex"),
+      /Codex directory.*symlink/,
+    );
   }));
 
 test("chained skill symlinks fail clearly before VM creation", () =>
@@ -167,7 +169,10 @@ test("skill symlink cannot expose host home", () =>
     mkdirSync(join(root, ".codex"));
     mkdirSync(join(root, "project"));
     symlinkSync(root, join(skills, "unsafe"));
-    assert.throws(() => mountPlan(join(root, "project"), root), /host home/);
+    assert.throws(
+      () => mountPlan(join(root, "project"), root, "codex"),
+      /host home/,
+    );
   }));
 
 test("unrelated dangling Codex cache symlinks do not block the mount plan", () =>
@@ -180,7 +185,7 @@ test("unrelated dangling Codex cache symlinks do not block the mount plan", () =
       join(root, ".codex", ".tmp", "old"),
     );
     assert.deepEqual(
-      new Set(mountPlan(work, root).keys()),
+      new Set(mountPlan(work, root, "codex").keys()),
       new Set([work, join(root, ".codex")]),
     );
   }));
@@ -193,32 +198,101 @@ test("dangling skill symlinks stay dangling without preventing other skill mount
     assert.deepEqual(withSymlinkTargets([skills]), [skills]);
   }));
 
-test("Codex arguments survive mise consuming the option separator", () => {
-  assert.deepEqual(
-    parseOptions("run", [
-      "--checkout",
-      "/work",
-      "--model",
-      "model-name",
-      "--version",
-    ]),
-    {
-      values: { checkout: "/work" },
-      extra: ["--model", "model-name", "--version"],
-    },
+test("bare invocation selects a browser-equipped base shell without Herdr", () => {
+  const parsed = parseInvocation([]);
+  assert.equal(parsed.command, "run");
+  assert.equal(parsed.options.agent, undefined);
+  assert.equal(parsed.options.herdr, false);
+  assert.deepEqual(parsed.argv, ["bash"]);
+});
+
+test("prompts require an explicit agent and remain literal", () => {
+  assert.throws(
+    () => parseInvocation(["--prompt", "Fix tests"]),
+    /requires --agent/,
+  );
+  for (const agent of ["codex", "opencode", "claude"]) {
+    const prompt = "--literal; $(not-a-shell-command)";
+    const parsed = parseInvocation(["--agent", agent, "--prompt", prompt]);
+    assert.equal(parsed.options.agent, agent);
+    assert.ok(
+      parsed.argv.includes(prompt) ||
+        parsed.argv.includes("--prompt=" + prompt),
+    );
+  }
+});
+
+test("--exec preserves command arguments and separates launcher flags", () => {
+  const parsed = parseInvocation([
+    "--herdr",
+    "--exec",
+    "printf",
+    "%s",
+    "a b",
+    "--help",
+  ]);
+  assert.equal(parsed.options.herdr, true);
+  assert.deepEqual(parsed.argv, ["printf", "%s", "a b", "--help"]);
+  assert.throws(() => parseInvocation(["--exec"]), /requires a command/);
+  assert.throws(
+    () =>
+      parseInvocation([
+        "--agent",
+        "codex",
+        "--prompt",
+        "test",
+        "--exec",
+        "echo",
+      ]),
+    /cannot combine/,
   );
 });
 
-test("CLI launches Codex by default and retains management commands and help", () => {
-  for (const args of [
-    [],
-    ["--checkout", "/work", "--model", "model-name"],
-    ["--", "status"],
-  ])
-    assert.deepEqual(parseCommand(args), { command: "run", args });
-  assert.deepEqual(parseCommand(["stop", "cs-test"]), {
-    command: "stop",
-    args: ["cs-test"],
-  });
-  assert.deepEqual(parseCommand(["--help"]), { command: "--help", args: [] });
+test("management commands and help stay explicit", () => {
+  assert.equal(parseInvocation(["--help"]).command, "help");
+  assert.equal(parseInvocation(["stop", "ac-test"]).name, "ac-test");
+  assert.equal(parseInvocation(["stop", "cs-legacy"]).name, "cs-legacy");
+  assert.throws(() => parseInvocation(["exec", "echo"]), /--exec/);
+  assert.throws(() => parseInvocation(["--agent", "unknown"]), /Unknown agent/);
 });
+
+test("base mount plan needs no Codex state and exposes no agent credentials", () =>
+  fixture((root) => {
+    const work = join(root, "work");
+    mkdirSync(work);
+    assert.deepEqual([...mountPlan(work, root).keys()], [work]);
+  }));
+
+test("guest-owned persistent homes never expand host mounts through symlinks", () =>
+  fixture((root) => {
+    const work = join(root, "work");
+    mkdirSync(work);
+    const secret = join(root, ".ssh");
+    mkdirSync(secret);
+    for (const agent of ["claude", "opencode"] as const) {
+      const state = join(
+        root,
+        ".local",
+        "share",
+        "agent-container",
+        agent,
+        "home",
+      );
+      mkdirSync(state, { recursive: true });
+      symlinkSync(secret, join(state, "host-ssh"));
+      assert.deepEqual(
+        new Set(mountPlan(work, root, agent).keys()),
+        new Set([work, state]),
+      );
+    }
+  }));
+
+test("persistent home roots cannot redirect through a symlinked ancestor", () =>
+  fixture((root) => {
+    const work = join(root, "work");
+    mkdirSync(work);
+    const outside = join(root, "elsewhere");
+    mkdirSync(outside);
+    symlinkSync(outside, join(root, ".local"));
+    assert.throws(() => mountPlan(work, root, "claude"), /persistent home/);
+  }));

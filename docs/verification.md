@@ -3,7 +3,60 @@
 Verified locally on Apple silicon with Apple container 1.7.1 on 16 November 2026.
 All locally built images below are Linux arm64.
 
-## Image comparison
+## Current agent-container profiles
+
+The four-profile design was built and tested locally on 16 November 2026.
+All four images include Chrome for Testing 157.0.8103.78, agent-browser 0.43.0,
+GitHub CLI 2.104.0, mise, pnpm, Git, JJ, and hc. The OS lock contains 133 arm64
+packages; the resolved amd64 lock contains 134 packages.
+
+| Image                      | Compressed image data | Agent CLI           | Trivy findings |
+| -------------------------- | --------------------: | ------------------- | -------------- |
+| `agent-container:base`     |              498.2 MB | None                | 0              |
+| `agent-container:codex`    |              667.5 MB | Codex 0.167.2       | 0              |
+| `agent-container:opencode` |              630.4 MB | OpenCode 2.3.0      | 0              |
+| `agent-container:claude`   |              670.6 MB | Claude Code 2.1.325 | 0              |
+
+Image configuration inspection confirmed that all three agent images share the
+base image's exact 19 filesystem layers. Each agent adds its own locked CLI graph
+above that base. These are compressed image sizes, not unique host disk usage.
+Build cache and exported archives need additional temporary disk space.
+
+The final checks passed:
+
+- `mise run check`: all format/lint/type checks, locks, and 26 unit tests.
+- `mise run audit`: root and four profile pnpm audits, Trivy repository scan,
+  and Chrome stable-version check.
+- `mise run check:image`: exact OS inventories; tools including gh; expected
+  agent version and supported launch flags; absence of other agents, npm/npx,
+  compilers, make, and pkg-config; an actual agent-browser page load in each image.
+- `mise run scan`: all four final images, with no reported vulnerabilities at
+  any severity in this advisory snapshot. Full JSON reports are in `.artifacts/`.
+- `mise run smoke:cli`: bare shell, literal arguments, piped direct execution,
+  exit code 42 propagation, worktree Git writes, read-only skills, private host
+  file exclusion, persistent state for all agents, rejection of noninteractive
+  Herdr workloads, retained guest supervision, and complete teardown.
+- A separate interactive test against the normal Herdr core created a guest
+  session automatically. Selected space, tab, and pane stayed unchanged. Ending
+  the guest terminal removed its VM, registration, and remote app session.
+
+The smoke tests used fake agent state and separate hc configuration. No account
+login or model request was made. Native help/version checks validate the installed
+CLI flags; they do not establish successful provider authentication or an actual
+interactive prompt exchange. Claude/OpenCode Linux login state is persistent but
+was not authenticated in this run. Host Keychain login is not imported.
+
+Review fixes include preventing guest-owned persistent-home symlinks from adding
+host mounts, retaining management of old `cs-` guests, correcting the Codex state
+probe, and rejecting watch-only noninteractive Herdr execution. The symlink
+regressions failed before the mount fix and passed afterward.
+
+Both architecture locks are validated. Actual builds and runtime checks here
+were arm64; amd64 build/browser/scan coverage is configured in CI and has not run
+on a hosted runner. The repo still has no remote, so scheduled CI is not active.
+Scanner coverage of native downloaded binaries and Chrome remains limited.
+
+## Historical image comparison
 
 | Image                                             | Compressed image data | Critical | High | Medium |  Low | Unknown |
 | ------------------------------------------------- | --------------------: | -------: | ---: | -----: | ---: | ------: |

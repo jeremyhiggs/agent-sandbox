@@ -24,7 +24,7 @@ for (const arch of arches) {
   const image = process.env.IMAGE_WOLFI_BASE;
   if (!image?.includes("@sha256:"))
     throw new Error("Missing pinned Wolfi base; run through mise");
-  const name = `cs-lock-${randomUUID().slice(0, 8)}`;
+  const name = `ac-lock-${randomUUID().slice(0, 8)}`;
   const invoke = (args: string[], capture = false): string =>
     execFileSync(engine, args, {
       encoding: "utf8",
@@ -51,58 +51,57 @@ for (const arch of arches) {
     const basePins = parseApkDatabase(
       exec(["cat", "/lib/apk/db/installed"], true),
     );
-    for (const profile of ["base", "browser"] as const) {
-      const requests = [
-        ...packageRequests.base,
-        ...(profile === "browser" ? packageRequests.browser : []),
-      ].map((p) =>
-        p === "nodejs-24" ? `${p}~${process.env.IMAGE_NODE_VERSION}` : p,
+    const requests = packageRequests.map((p) =>
+      p === "nodejs-24"
+        ? `${p}~${process.env.IMAGE_NODE_VERSION}`
+        : p === "gh"
+          ? `${p}~${process.env.IMAGE_GH_VERSION}`
+          : p,
+    );
+    const simulation = exec(
+      [
+        "apk",
+        "add",
+        "--simulate",
+        "--no-cache",
+        "--timeout",
+        "30",
+        ...requests,
+      ],
+      true,
+    );
+    const resolved = new Map(
+      basePins.map((pin) => pin.split("=") as [string, string]),
+    );
+    for (const line of simulation.split("\n")) {
+      const change = line.match(
+        /(?:Installing|Upgrading|Downgrading|Reinstalling) (\S+) \(([^)]+)\)/,
       );
-      const simulation = exec(
-        [
-          "apk",
-          "add",
-          "--simulate",
-          "--no-cache",
-          "--timeout",
-          "30",
-          ...requests,
-        ],
-        true,
-      );
-      const resolved = new Map(
-        basePins.map((pin) => pin.split("=") as [string, string]),
-      );
-      for (const line of simulation.split("\n")) {
-        const change = line.match(
-          /(?:Installing|Upgrading|Downgrading|Reinstalling) (\S+) \(([^)]+)\)/,
-        );
-        if (change) resolved.set(change[1], change[2].split(" -> ").at(-1)!);
-        const removed = line.match(/Purging (\S+) /);
-        if (removed) resolved.delete(removed[1]);
-      }
-      const pins = [...resolved]
-        .map(([name, version]) => `${name}=${version}`)
-        .sort();
-      for (const requested of requests) {
-        const name = requested.split("~", 1)[0];
-        if (!resolved.has(name))
-          throw new Error("APK solver omitted requested package: " + name);
-      }
-      results.push({
-        path: join(
-          import.meta.dirname,
-          "..",
-          "image",
-          "locks",
-          "wolfi",
-          arch,
-          `${profile}.txt`,
-        ),
-        pins,
-      });
-      console.log(`wolfi/${arch}/${profile}: resolved ${pins.length} packages`);
+      if (change) resolved.set(change[1], change[2].split(" -> ").at(-1)!);
+      const removed = line.match(/Purging (\S+) /);
+      if (removed) resolved.delete(removed[1]);
     }
+    const pins = [...resolved]
+      .map(([name, version]) => `${name}=${version}`)
+      .sort();
+    for (const requested of requests) {
+      const name = requested.split("~", 1)[0];
+      if (!resolved.has(name))
+        throw new Error("APK solver omitted requested package: " + name);
+    }
+    results.push({
+      path: join(
+        import.meta.dirname,
+        "..",
+        "image",
+        "locks",
+        "wolfi",
+        arch,
+        "base.txt",
+      ),
+      pins,
+    });
+    console.log(`wolfi/${arch}/base: resolved ${pins.length} packages`);
   } finally {
     if (created)
       invoke(

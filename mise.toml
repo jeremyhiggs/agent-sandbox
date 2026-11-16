@@ -23,9 +23,12 @@ IMAGE_BROWSER_SHA256_AMD64 = "9223832977a13db3646201b1341c1f9cf08afa3ceae9254011
 IMAGE_WOLFI_BASE = "cgr.dev/chainguard/wolfi-base:latest@sha256:833c48f1faf32c90e6f9501a2410a9aa28ceb2c594102edd4470053c30efa089"
 IMAGE_MISE_BASE = "ghcr.io/jdx/mise:2026.11.7@sha256:36a8408d3398aff30a761b4ae57f71f50942d64f4e7ecd5353ffaee7ec4fa63a"
 IMAGE_CODEX_VERSION = "0.167.2"
+IMAGE_OPENCODE_VERSION = "2.3.0"
+IMAGE_CLAUDE_VERSION = "2.1.325"
 IMAGE_AGENT_BROWSER_VERSION = "0.43.0"
 IMAGE_HC_VERSION = "0.1.20"
 IMAGE_JJ_VERSION = "0.47.1"
+IMAGE_GH_VERSION = "2.104.0"
 
 [tasks.fmt]
 description = "Format scripts, documentation, and configuration"
@@ -54,12 +57,12 @@ run = "node --test tests/*.test.ts"
 depends = ["lint", "test", "lock:check"]
 
 [tasks.build]
-description = "Build the Apple container image"
-run = "node scripts/sandbox.ts build"
+description = "Build all four images with a shared browser base"
+run = "node scripts/profiles.ts build"
 
 [tasks.scan]
 description = "Export and scan the Apple image; fail on HIGH or CRITICAL CVEs"
-run = "node scripts/sandbox.ts scan"
+run = "node scripts/profiles.ts scan"
 
 [tasks.smoke]
 description = "Exercise a disposable worktree, guest tools, and host hc registration"
@@ -70,31 +73,31 @@ description = "Install the locked Node type definitions"
 run = "pnpm install --frozen-lockfile --ignore-scripts"
 
 [tasks.install]
-description = "Install codex-container in ~/.local/bin (--bin-dir PATH to override)"
+description = "Install agent-container in ~/.local/bin (--bin-dir PATH to override)"
 run = "node scripts/install.ts"
 
 [tasks."smoke:cli"]
 description = "Test the installed CLI from a separate linked worktree and verify hc integration"
-run = "node scripts/smoke.ts --cli codex-container"
+run = "node scripts/smoke.ts --cli agent-container"
 
 [tasks.start]
-description = "Start a guest and register it with host hc (--checkout PATH --name cs-NAME)"
+description = "Retain a guest; add --herdr to register with host hc"
 run = "node scripts/sandbox.ts start"
 
-[tasks.codex]
-description = "Run Codex interactively in a guest; destroy it when the attachment ends"
-run = "node scripts/sandbox.ts run"
+[tasks.run]
+description = "Open a disposable shell; --agent selects an agent"
+run = "node scripts/sandbox.ts"
 
 [tasks.stop]
-description = "Unregister and delete a guest (pass cs-NAME)"
+description = "Unregister and delete a guest (pass ac-NAME)"
 run = "node scripts/sandbox.ts stop"
 
 [tasks.shell]
-description = "Open a shell in an existing guest (pass cs-NAME)"
+description = "Open a shell in an existing guest (pass ac-NAME)"
 run = "node scripts/sandbox.ts shell"
 
 [tasks.attach]
-description = "Attach to an existing guest's Codex terminal (pass cs-NAME)"
+description = "Attach to an existing guest's Herdr terminal (pass ac-NAME)"
 run = "node scripts/sandbox.ts attach"
 
 [tasks.status]
@@ -103,19 +106,19 @@ run = "node scripts/sandbox.ts status"
 
 [tasks."build:ci"]
 description = "Build using Docker (Linux CI)"
-run = "node scripts/sandbox.ts build --engine docker"
+run = "node scripts/profiles.ts build docker"
 
 [tasks."scan:ci"]
 description = "Scan the Docker image (Linux CI)"
-run = "node scripts/sandbox.ts scan --engine docker"
+run = "node scripts/profiles.ts scan docker"
 
 [tasks."check:image"]
-description = "Test the browser-free core image"
-run = "container run --rm codex-sandbox:local node /opt/codex-container/check.ts"
+description = "Test tools, browsers and agent separation in all images"
+run = "node scripts/profiles.ts check"
 
 [tasks."check:image:ci"]
-description = "Test the browser-free core image using Docker (Linux CI)"
-run = "docker run --rm codex-sandbox:local node /opt/codex-container/check.ts"
+description = "Test tools, browsers and agent separation in all images using Docker (Linux CI)"
+run = "node scripts/profiles.ts check docker"
 
 [tasks.audit]
 description = "Audit repository/image Node packages, repository dependencies, and browser freshness"
@@ -125,30 +128,13 @@ depends = ["audit:node", "audit:tools", "audit:repo", "audit:browser"]
 run = "pnpm audit --audit-level=high"
 
 [tasks."audit:tools"]
-run = "pnpm --dir image/tools audit --audit-level=high"
+run = "node scripts/profiles.ts audit"
 
 [tasks."audit:repo"]
 run = "node scripts/security.ts repo"
 
 [tasks."audit:browser"]
 run = "node scripts/security.ts browser"
-
-[tasks."build:browser"]
-description = "Build the optional current Chrome for Testing image"
-run = "node scripts/sandbox.ts build --variant browser --image codex-sandbox:browser"
-
-[tasks."scan:browser"]
-run = "node scripts/sandbox.ts scan --image codex-sandbox:browser"
-
-[tasks."smoke:browser"]
-run = "node scripts/smoke.ts --image codex-sandbox:browser --browser"
-
-[tasks."check:browser"]
-run = "container run --rm codex-sandbox:browser node /opt/codex-container/check.ts --browser"
-
-[tasks.browser]
-description = "Install pinned Chrome and its runtime libraries in an existing guest (pass cs-NAME)"
-run = "node scripts/sandbox.ts browser"
 
 [tasks."lock:update"]
 description = "Resolve complete Wolfi package locks for both architectures"
@@ -160,7 +146,4 @@ run = "node scripts/lock-tools.ts"
 
 [tasks."lock:check"]
 description = "Validate package locks, base digests, and CLI version pins"
-run = [
-  "node scripts/check-locks.ts",
-  "pnpm --dir image/tools install --lockfile-only --frozen-lockfile --ignore-scripts",
-]
+run = ["node scripts/check-locks.ts", "node scripts/profiles.ts locks"]

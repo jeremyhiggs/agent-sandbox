@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -12,111 +12,143 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { setTimeout } from "node:timers/promises";
 import { parseArgs } from "node:util";
-import { DEFAULT_DNS, IMAGE, run, start, stop } from "./sandbox.ts";
+import { ROOT, run } from "./sandbox.ts";
 
-const { values } = parseArgs({
-  options: {
-    image: { type: "string", default: IMAGE },
-    browser: { type: "boolean", default: false },
-    cli: { type: "string" },
-  },
-});
-
-// Fake Codex state makes this test independent of credentials and account access.
-const root = realpathSync(mkdtempSync(join(tmpdir(), "codex-smoke-")));
-// Keep Unix socket paths short on macOS, whose usual temp directory is long.
-const coreHome = mkdtempSync("/tmp/cc-hc-");
-process.env.HC_SESSION = "smoke";
-process.env.XDG_CONFIG_HOME = join(coreHome, "config");
-process.env.XDG_STATE_HOME = join(coreHome, "state");
-delete process.env.HC_SOCKET;
-delete process.env.HC_TERMINAL_ID;
+const { values } = parseArgs({ options: { cli: { type: "string" } } });
+const root = realpathSync(mkdtempSync(join(tmpdir(), "agent-smoke-")));
+const coreHome = mkdtempSync("/tmp/ac-hc-");
 const home = join(root, "home"),
   main = join(root, "main"),
   work = join(root, "linked worktree");
-let guest: string | undefined;
+const binary = values.cli ?? process.execPath;
+const prefix = values.cli ? [] : [join(ROOT, "scripts", "sandbox.ts")];
+const names = new Set<string>();
 let coreStarted = false;
-function stopGuest(name: string): void {
-  if (values.cli) run(values.cli, ["stop", name]);
-  else stop(name);
+function invoke(args: string[], input?: string) {
+  return execFileSync(binary, [...prefix, ...args], {
+    cwd: work,
+    encoding: "utf8",
+    input,
+    stdio: ["pipe", "pipe", "inherit"],
+  });
+}
+function launch(suffix: string, args: string[], input?: string) {
+  const name = `ac-smoke-${process.pid}-${suffix}`;
+  names.add(name);
+  return invoke(["--name", name, "--home", home, ...args], input);
 }
 try {
-  run("hc", ["server", "start"]);
-  coreStarted = true;
   mkdirSync(join(home, ".codex", "skills"), { recursive: true });
   mkdirSync(join(home, ".agents", "skills", "example"), { recursive: true });
-  writeFileSync(
-    join(home, ".agents", "skills", "example", "SKILL.md"),
-    "# Smoke skill\n",
-  );
+  const skill = join(home, ".agents", "skills", "example", "SKILL.md");
+  writeFileSync(skill, "# Smoke skill\n");
   symlinkSync(
     join(home, ".agents", "skills", "example"),
     join(home, ".codex", "skills", "example"),
   );
   const sentinel = join(home, "private-host-file");
-  const externalSkill = join(root, "shared-skill.md");
-  writeFileSync(externalSkill, "# External file skill\n");
-  symlinkSync(
-    externalSkill,
-    join(home, ".agents", "skills", "example", "REFERENCE.md"),
-  );
   writeFileSync(sentinel, "not mounted");
   run("git", ["init", "-q", main]);
   run("git", ["-C", main, "worktree", "add", "--orphan", "-qb", "smoke", work]);
-  guest = values.cli
-    ? execFileSync(
-        values.cli,
-        ["start", "--home", home, "--image", values.image!],
-        { cwd: work, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
-      ).trim()
-    : start({
-        checkout: work,
-        home,
-        dns: process.env.CONTAINER_DNS,
-        image: values.image,
-      }).name;
-  const registered = JSON.parse(run("hc", ["machine", "ls", "--json"]));
-  assert.equal(
-    registered.machines.find(
-      (machine: { name: string }) => machine.name === guest,
-    )?.temporary,
-    false,
-    "Herdr hides machines marked temporary; registration must remain visible until stop",
-  );
-  execFileSync(
-    "container",
-    [
-      "exec",
-      guest,
-      "node",
-      "/opt/codex-container/check.ts",
-      ...(values.browser ? ["--browser"] : []),
-    ],
-    { stdio: "inherit" },
+  // Ordinary execution must never call hc, even with an unusable hc on PATH.
+  const fakeBin = join(root, "bin");
+  mkdirSync(fakeBin);
+  writeFileSync(join(fakeBin, "hc"), "#!/bin/sh\nexit 91\n", { mode: 0o755 });
+  const normalPath = process.env.PATH;
+  process.env.PATH = `${fakeBin}:${normalPath}`;
+  assert.match(
+    launch(
+      "shell",
+      [],
+      "printf 'base-shell-ready\\n'\ncommand -v google-chrome\nexit\n",
+    ),
+    /base-shell-ready/,
   );
   const probe = `
-    const fs = require('node:fs');
-    const assert = require('node:assert/strict');
-    assert.ok(fs.readFileSync('/etc/resolv.conf', 'utf8').includes('nameserver ' + ${JSON.stringify(DEFAULT_DNS)}));
+    const fs = require('node:fs'), assert = require('node:assert/strict');
+    assert.equal(process.cwd(), ${JSON.stringify(work)});
     assert.equal(fs.existsSync(${JSON.stringify(sentinel)}), false);
-    assert.match(fs.readFileSync(${JSON.stringify(join(home, ".agents", "skills", "example", "REFERENCE.md"))}, 'utf8'), /External file skill/);
-    assert.match(fs.readFileSync(${JSON.stringify(join(home, ".codex", "skills", "example", "SKILL.md"))}, 'utf8'), /Smoke skill/);
-    for (const skill of ${JSON.stringify([externalSkill, join(home, ".codex", "skills", "example", "SKILL.md")])}) {
-      assert.throws(() => fs.writeFileSync(skill, 'must stay read-only'), error => error.code === 'EROFS' || error.code === 'EACCES');
-    }
+    assert.equal(fs.existsSync(${JSON.stringify(join(home, ".codex"))}), false);
+    assert.throws(() => fs.writeFileSync(${JSON.stringify(skill)}, 'fail'), e => ['EROFS','EACCES'].includes(e.code));
     fs.writeFileSync(${JSON.stringify(join(work, "from-guest.txt"))}, 'shared checkout\\n');
-    fs.writeFileSync(${JSON.stringify(join(home, ".codex", "guest-state"))}, 'persistent state');
+    require('node:child_process').execFileSync('git', ['add', 'from-guest.txt']);
+    console.log('literal argument:', process.argv[1]);
   `;
-  run("container", ["exec", guest, "node", "-e", probe]);
-  run("container", ["exec", guest, "git", "-C", work, "add", "from-guest.txt"]);
   assert.match(
-    run("git", ["-C", work, "status", "--porcelain"]),
-    /A  from-guest.txt/,
+    launch("literal", ["--exec", "node", "-e", probe, "a b; $(not-shell)"]),
+    /a b; \$\(not-shell\)/,
   );
+  const failedName = `ac-smoke-${process.pid}-exit`;
+  names.add(failedName);
+  const failed = spawnSync(
+    binary,
+    [
+      ...prefix,
+      "--name",
+      failedName,
+      "--home",
+      home,
+      "--exec",
+      "sh",
+      "-c",
+      "exit 42",
+    ],
+    { cwd: work, encoding: "utf8" },
+  );
+  assert.equal(failed.status, 42, failed.stderr);
+  for (const agent of ["codex", "opencode", "claude"]) {
+    const stateProbe = `const fs=require('node:fs'); fs.writeFileSync((process.env.CODEX_HOME || process.env.HOME) + '/agent-state', '${agent}'); console.log(process.env.HOME)`;
+    launch(agent, ["--agent", agent, "--exec", "node", "-e", stateProbe]);
+    const guestHome =
+      agent === "codex"
+        ? join(home, ".codex")
+        : join(home, ".local", "share", "agent-container", agent, "home");
+    assert.equal(readFileSync(join(guestHome, "agent-state"), "utf8"), agent);
+    assert.ok(
+      launch(`${agent}-version`, [
+        "--agent",
+        agent,
+        "--exec",
+        agent,
+        "--version",
+      ]).trim(),
+    );
+  }
+  process.env.PATH = normalPath;
+  // A separate core cannot disturb the user's active Herdr session.
+  process.env.HC_SESSION = "smoke";
+  process.env.XDG_CONFIG_HOME = join(coreHome, "config");
+  process.env.XDG_STATE_HOME = join(coreHome, "state");
+  delete process.env.HC_SOCKET;
+  delete process.env.HC_TERMINAL_ID;
+  run("hc", ["server", "start"]);
+  coreStarted = true;
+  const noninteractive = spawnSync(
+    binary,
+    [...prefix, "--herdr", "--exec", "cat"],
+    { cwd: work, input: "must not be dropped\n", encoding: "utf8" },
+  );
+  assert.equal(noninteractive.status, 1);
+  assert.match(noninteractive.stderr, /require interactive stdin and stdout/);
+  const registered = JSON.parse(run("hc", ["machine", "ls", "--json"]));
+  assert.equal(
+    registered.machines.length,
+    0,
+    "rejected noninteractive launch must not register a guest",
+  );
+  const retained = `ac-smoke-${process.pid}-retained`;
+  names.add(retained);
+  assert.equal(
+    invoke(["start", "--name", retained, "--home", home, "--herdr"]).trim(),
+    retained,
+  );
+  const machine = JSON.parse(
+    run("hc", ["machine", "ls", "--json"]),
+  ).machines.find((m: { name: string }) => m.name === retained);
+  assert.equal(machine.temporary, false, "Herdr hides temporary machines");
   const guestMachines = JSON.parse(
-    run("container", ["exec", guest, "hc", "machine", "ls", "--json"]),
+    run("container", ["exec", retained, "hc", "machine", "ls", "--json"]),
   );
   assert.equal(
     guestMachines.machines.length,
@@ -127,84 +159,48 @@ try {
     "run",
     "--bg",
     "--on",
-    guest,
+    retained,
     "--name",
     "probe",
-    "--cwd",
-    work,
     "--no-parent",
     "--outlive-parent",
     "--",
     "sh",
     "-c",
-    "printf 'hc-guest-ready\\n'; sleep 120",
+    "printf 'herdr-guest-ready\\n'",
   ]);
-  let screen = "";
-  for (let attempt = 0; attempt < 20; attempt++) {
-    screen = run("hc", ["read", `${guest}/probe`]);
-    if (screen.includes("hc-guest-ready")) break;
-    await setTimeout(250);
-  }
-  assert.match(
-    screen,
-    /hc-guest-ready/,
-    "host must read a terminal managed by the guest core",
+  run("hc", ["wait", `${retained}/probe`, "--timeout", "30"]);
+  assert.match(run("hc", ["read", `${retained}/probe`]), /herdr-guest-ready/);
+  invoke(["stop", retained]);
+  const guests = JSON.parse(
+    run("container", ["ls", "--all", "--format", "json"]),
   );
-  const name = guest;
-  stopGuest(name);
-  guest = undefined;
-  let defaultGuest: string | undefined;
-  if (values.cli) {
-    defaultGuest = `${name}-default`;
-    execFileSync(
-      values.cli,
-      [
-        "--name",
-        defaultGuest,
-        "--home",
-        home,
-        "--image",
-        values.image!,
-        "--",
-        "--version",
-      ],
-      { cwd: work, stdio: "inherit" },
-    );
-  }
+  assert.equal(
+    guests.some((g: { configuration: { id: string } }) =>
+      names.has(g.configuration.id),
+    ),
+    false,
+  );
+  assert.match(
+    run("git", ["-C", work, "status", "--porcelain"]),
+    /A  from-guest.txt/,
+  );
   assert.equal(
     readFileSync(join(work, "from-guest.txt"), "utf8"),
     "shared checkout\n",
   );
-  assert.equal(
-    readFileSync(join(home, ".codex", "guest-state"), "utf8"),
-    "persistent state",
-  );
-  assert.equal(existsSync(sentinel), true);
-  const machines = JSON.parse(run("hc", ["machine", "ls", "--json"]));
-  assert.equal(
-    machines.machines.some(
-      (machine: { name: string }) =>
-        machine.name === name || machine.name === defaultGuest,
-    ),
-    false,
-  );
-  const containers = JSON.parse(
-    run("container", ["ls", "--all", "--format", "json"]),
-  );
-  assert.equal(
-    containers.some(
-      (item: { configuration: { id: string } }) =>
-        item.configuration.id === name ||
-        item.configuration.id === defaultGuest,
-    ),
-    false,
-  );
+  assert.ok(existsSync(sentinel));
   console.log(
-    "Worktree, skills, host isolation, hc registration, image checks, and teardown passed",
+    "Base shell, literal argv, exit status, agent state, worktree, isolation, optional Herdr and teardown passed",
   );
 } finally {
   try {
-    if (guest) stopGuest(guest);
+    const guests = JSON.parse(
+      run("container", ["ls", "--all", "--format", "json"]),
+    );
+    for (const guest of guests)
+      if (names.has(guest.configuration.id))
+        invoke(["stop", guest.configuration.id]);
   } finally {
     try {
       if (coreStarted) run("hc", ["server", "stop"]);

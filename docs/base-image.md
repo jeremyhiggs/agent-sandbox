@@ -6,7 +6,9 @@ This choice applies to the tested agent environment, not every Linux repository.
 
 ## Why Wolfi
 
-The comparison uses the same browser-free image scope, without npm or build tools.
+This historical comparison used the same browser-free image scope, without npm or build tools.
+The current shared base includes Chrome and its runtime libraries; the old sizes
+below are not measurements of the current four-profile design.
 The local arm64 results from 16 November 2026 are:
 
 | Property                     | Wolfi  | Debian 13 slim                             |

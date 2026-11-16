@@ -1,50 +1,46 @@
-import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-export const packageRequests = {
-  base: [
-    "bash",
-    "ca-certificates-bundle",
-    "curl",
-    "git",
-    "git-lfs",
-    "jq",
-    "less",
-    "nodejs-24",
-    "openssh-client",
-    "procps",
-    "ripgrep",
-    "tini",
-    "unzip",
-    "xz",
-  ],
-  browser: [
-    "alsa-lib",
-    "at-spi2-core",
-    "cairo",
-    "cups-libs",
-    "font-liberation",
-    "glib",
-    "libatk-1.0",
-    "libatk-bridge-2.0",
-    "libdrm",
-    "libx11",
-    "libxcb",
-    "libxcomposite",
-    "libxdamage",
-    "libxext",
-    "libxfixes",
-    "libxkbcommon",
-    "libxrandr",
-    "mesa-gbm",
-    "libnspr",
-    "libnss",
-    "libudev",
-    "pango",
-  ],
-};
-export type Profile = "base" | "browser";
+export const packageRequests = [
+  "bash",
+  "ca-certificates-bundle",
+  "curl",
+  "git",
+  "gh",
+  "git-lfs",
+  "jq",
+  "less",
+  "nodejs-24",
+  "openssh-client",
+  "procps",
+  "ripgrep",
+  "tini",
+  "unzip",
+  "xz",
+
+  "alsa-lib",
+  "at-spi2-core",
+  "cairo",
+  "cups-libs",
+  "font-liberation",
+  "glib",
+  "libatk-1.0",
+  "libatk-bridge-2.0",
+  "libdrm",
+  "libx11",
+  "libxcb",
+  "libxcomposite",
+  "libxdamage",
+  "libxext",
+  "libxfixes",
+  "libxkbcommon",
+  "libxrandr",
+  "mesa-gbm",
+  "libnspr",
+  "libnss",
+  "libudev",
+  "pango",
+];
 
 export function parsePackagePins(contents: string): string[] {
   const pins = contents.trim().split("\n");
@@ -88,11 +84,11 @@ export function verifyPackageInventory(
     );
 }
 
-export function packagePins(profile: Profile): string[] {
+export function packagePins(): string[] {
   const arch = process.arch === "arm64" ? "arm64" : "amd64";
   return parsePackagePins(
     readFileSync(
-      join(import.meta.dirname, "locks", "wolfi", arch, `${profile}.txt`),
+      join(import.meta.dirname, "locks", "wolfi", arch, "base.txt"),
       "utf8",
     ),
   );
@@ -100,10 +96,4 @@ export function packagePins(profile: Profile): string[] {
 
 export function installedPackages(): string[] {
   return parseApkDatabase(readFileSync("/lib/apk/db/installed", "utf8"));
-}
-
-export function installBrowserPackages(): void {
-  const pins = packagePins("browser");
-  execFileSync("apk", ["add", "--no-cache", ...pins], { stdio: "inherit" });
-  verifyPackageInventory(pins, installedPackages(), false);
 }

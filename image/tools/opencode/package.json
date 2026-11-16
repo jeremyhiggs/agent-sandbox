@@ -1,0 +1,7 @@
+{
+  "name": "agent-container-opencode",
+  "private": true,
+  "dependencies": {
+    "@opencode/cli": "2.3.0"
+  }
+}
