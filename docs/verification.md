@@ -71,6 +71,11 @@ The pinned Wolfi base index was checked to contain both architectures.
   The diagnostic guest was then destroyed.
 - Both final Wolfi images passed their Trivy gates. The trimmed Debian scan failed
   as expected; there are no suppression entries or ignore-unfixed policy.
+- Fresh Wolfi guests passed mise repository-config checks: Python 3.13.18 and Go
+  1.27.4 installation, config-defined environment variables, a task, and Python SSL
+  import. Mise's APK bootstrap installed and ran `file` 5.48 from `mise.toml`.
+  The guests used no host mounts and were removed after the checks. See
+  [the base image decision](base-image.md) for package catalogue measurements.
 - Code review completed with correctness, testing, maintainability, and reliability
   coverage. Its browser retry finding was fixed and the fix was independently
   rechecked. The simplification pass found no worthwhile changes.

@@ -165,6 +165,11 @@ toolchains, while distribution packages supply their required system libraries.
 These changes disappear with the guest. For repeated use, add a derived image
 instead of expanding the shared default image.
 
+Mise also supports system packages through `[bootstrap.packages]`. Its `apk`
+manager works in this image. This keeps repository-specific system dependencies
+in `mise.toml`, alongside tool versions. See the tested example in
+[the base image decision](docs/base-image.md#mise-support).
+
 ## Optional browser
 
 Codex and `hc` do not need Chromium. Agent-browser is the automation CLI; it
@@ -196,12 +201,19 @@ No host browser or browser profile is mounted.
 
 ## Wolfi and Debian slim
 
-Wolfi uses glibc, which supports the downloaded Linux builds of Codex, hc, JJ,
-and agent-browser. It uses `apk`, has different package names from Debian, and
-has a smaller package catalogue. Repository scripts that assume `apt`, Debian
-package names, or Debian-specific library layouts need changes. A mise config
-does not remove those system-package assumptions. Some base utilities are
-BusyBox variants; install GNU equivalents if a repo needs GNU-specific flags.
+Wolfi is the default because the trimmed image passes the current security gate
+and supports the required Linux tools. The equivalent Debian slim image retains
+128 HIGH/CRITICAL findings and an older OpenSSH release. Wolfi uses glibc, which
+supports common prebuilt Linux tools. Mise language installs, config-defined
+environment variables, tasks, and APK bootstrap passed live checks in this image.
+
+The current APK catalogue contains about 16,000 distinct package names. It covers
+common development tools and libraries, but it is not a Debian replacement for
+every repo. Package names, `apt` assumptions, BusyBox utilities, and source-build
+dependencies need review. Wolfi and Alpine packages cannot be mixed.
+
+[The base image decision](docs/base-image.md) records the evidence, package
+coverage, mise example, tradeoffs, and reasons to select Debian instead.
 
 The Dockerfile also supports a trimmed Debian 13 slim comparison:
 
