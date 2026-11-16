@@ -27,7 +27,7 @@ mise run smoke
 
 `mise.toml` pins host tooling and image tool versions. The Apple runtime is a
 macOS-only mise dependency. All base images have digest pins. Complete OS package
-locks live under `image/locks/`, for both distributions, profiles, and architectures.
+locks live under `image/locks/wolfi/`, for both profiles and architectures.
 Normal builds install exact versions and check the installed inventory. CLI
 archives have checksum pins, and image tools use a frozen pnpm lockfile. See
 [reproducible dependencies](docs/reproducibility.md) for the lock files and refresh tasks.
@@ -41,6 +41,36 @@ CONTAINER_DNS=8.8.8.8 mise run smoke
 ```
 
 This changes DNS for those guests, without changing the Mac's DNS settings.
+
+## Install the launcher command
+
+From this repository:
+
+```sh
+mise run install
+```
+
+From another directory, use `mise -C /path/to/codex-container run install`.
+
+This installs `codex-container` in `~/.local/bin`. Keep that directory on `PATH`.
+The command loads this repository's pinned mise environment, then runs from your
+original directory. Keep this repository at its installed location; the command
+references it. `--bin-dir PATH` selects a different installation directory.
+Installation is repeatable and refuses to overwrite a different existing command.
+
+From any existing checkout or linked worktree:
+
+```sh
+codex-container codex
+```
+
+It selects the current checkout by default. You can also use
+`codex-container codex --checkout /path/to/worktree`, or the `build`, `scan`,
+`start`, `stop`, `shell`, `attach`, `browser`, and `status` subcommands. Repo-local
+mise tasks remain available. Run `mise run smoke:cli` to test the installed
+command's worktree selection, mount boundaries, hc registration, and cleanup.
+Smoke tests use a separate `hc` session with scratch configuration/state and
+remove it afterward; they do not register guests in your normal Herdr core.
 
 ## Run Codex
 
@@ -145,10 +175,22 @@ directory does not require a separate login or copied configuration.
 ### Herdr connection
 
 Each guest has an independent `hc` core. The host registers it using
-`hc machine add --temp --via`, with `container exec -i GUEST sh -c` as the
+`hc machine add --via`, with `container exec -i GUEST sh -c` as the
 byte-preserving transport. No SSH server, SSH login, or forwarded host `hc`
 socket is needed. Host `hc` can supervise the guest's terminals; guest `hc`
 manages guest processes and starts with no host machine connections.
+
+The registration is visible in Herdr's app. It deliberately omits `--temp`,
+because Herdr hides machines with that flag. `stop` still removes the host
+registration and destroys the guest. To open a running guest in the app:
+
+```sh
+herdr-app do space.new --name "Container worktree" \
+  --machine cs-feature --folder /path/to/worktree
+```
+
+Close that Herdr space before stopping the guest. The app launches its terminal
+through the guest's own core; it does not need the host socket mounted inside.
 
 ### Repository mise configurations
 

@@ -69,6 +69,14 @@ run = "node scripts/smoke.ts"
 description = "Install the locked Node type definitions"
 run = "pnpm install --frozen-lockfile --ignore-scripts"
 
+[tasks.install]
+description = "Install codex-container in ~/.local/bin (--bin-dir PATH to override)"
+run = "node scripts/install.ts"
+
+[tasks."smoke:cli"]
+description = "Test the installed CLI from a separate linked worktree and verify hc integration"
+run = "node scripts/smoke.ts --cli codex-container"
+
 [tasks.start]
 description = "Start a guest and register it with host hc (--checkout PATH --name cs-NAME)"
 run = "node scripts/sandbox.ts start"

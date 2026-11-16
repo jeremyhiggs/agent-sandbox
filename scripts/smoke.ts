@@ -20,16 +20,31 @@ const { values } = parseArgs({
   options: {
     image: { type: "string", default: IMAGE },
     browser: { type: "boolean", default: false },
+    cli: { type: "string" },
   },
 });
 
 // Fake Codex state makes this test independent of credentials and account access.
 const root = realpathSync(mkdtempSync(join(tmpdir(), "codex-smoke-")));
+// Keep Unix socket paths short on macOS, whose usual temp directory is long.
+const coreHome = mkdtempSync("/tmp/cc-hc-");
+process.env.HC_SESSION = "smoke";
+process.env.XDG_CONFIG_HOME = join(coreHome, "config");
+process.env.XDG_STATE_HOME = join(coreHome, "state");
+delete process.env.HC_SOCKET;
+delete process.env.HC_TERMINAL_ID;
 const home = join(root, "home"),
   main = join(root, "main"),
   work = join(root, "linked worktree");
 let guest: string | undefined;
+let coreStarted = false;
+function stopGuest(name: string): void {
+  if (values.cli) run(values.cli, ["stop", name]);
+  else stop(name);
+}
 try {
+  run("hc", ["server", "start"]);
+  coreStarted = true;
   mkdirSync(join(home, ".codex", "skills"), { recursive: true });
   mkdirSync(join(home, ".agents", "skills", "example"), { recursive: true });
   writeFileSync(
@@ -50,12 +65,26 @@ try {
   writeFileSync(sentinel, "not mounted");
   run("git", ["init", "-q", main]);
   run("git", ["-C", main, "worktree", "add", "--orphan", "-qb", "smoke", work]);
-  guest = start({
-    checkout: work,
-    home,
-    dns: process.env.CONTAINER_DNS,
-    image: values.image,
-  }).name;
+  guest = values.cli
+    ? execFileSync(
+        values.cli,
+        ["start", "--home", home, "--image", values.image!],
+        { cwd: work, encoding: "utf8", stdio: ["ignore", "pipe", "inherit"] },
+      ).trim()
+    : start({
+        checkout: work,
+        home,
+        dns: process.env.CONTAINER_DNS,
+        image: values.image,
+      }).name;
+  const registered = JSON.parse(run("hc", ["machine", "ls", "--json"]));
+  assert.equal(
+    registered.machines.find(
+      (machine: { name: string }) => machine.name === guest,
+    )?.temporary,
+    false,
+    "Herdr hides machines marked temporary; registration must remain visible until stop",
+  );
   execFileSync(
     "container",
     [
@@ -122,7 +151,7 @@ try {
     "host must read a terminal managed by the guest core",
   );
   const name = guest;
-  stop(name);
+  stopGuest(name);
   guest = undefined;
   assert.equal(
     readFileSync(join(work, "from-guest.txt"), "utf8"),
@@ -154,6 +183,14 @@ try {
     "Worktree, skills, host isolation, hc registration, image checks, and teardown passed",
   );
 } finally {
-  if (guest) stop(guest);
-  rmSync(root, { recursive: true });
+  try {
+    if (guest) stopGuest(guest);
+  } finally {
+    try {
+      if (coreStarted) run("hc", ["server", "stop"]);
+    } finally {
+      rmSync(root, { recursive: true });
+      rmSync(coreHome, { recursive: true });
+    }
+  }
 }

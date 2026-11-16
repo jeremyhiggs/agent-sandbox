@@ -97,6 +97,27 @@ Earlier initial-image checks also verified the named Codex terminal task's
 `--version` exit/teardown path and a disposable Linux JJ linked workspace layout.
 No host repository was initialized with JJ.
 
+## Installed launcher and Herdr app
+
+`mise run install` installed the launcher in the user's local bin directory.
+Repeated installation succeeded, and `codex-container --help` worked outside
+this repository. `mise run smoke:cli` passed from a separate linked worktree
+without `--checkout`, proving that the command preserves the caller's directory.
+
+The app test exposed a distinction missed by the earlier hc-only checks: Herdr
+rejects machines registered with `hc machine add --temp`. After removing that
+flag, the app opened a remote space and rendered the guest terminal, checkout
+path, Codex version, and hc version without errors. No model request was sent.
+The test space, guest, and registration were removed afterward. Smoke tests now
+assert that registrations are visible rather than marked temporary.
+
+The final smoke check ran in a separate background hc terminal. The test itself
+uses a fresh `HC_SESSION`, scratch XDG configuration/state, and a short socket
+path suitable for macOS. It passed the worktree, skills, isolation, registration,
+terminal-output, and teardown checks, then stopped its own core and removed the
+scratch state. It does not alter the normal core's machine registrations or UI.
+All 20 unit tests and lint/type/lock checks passed too.
+
 ## Scan coverage and CI limits
 
 The complete ignored local reports are:

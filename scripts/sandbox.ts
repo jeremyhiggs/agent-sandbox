@@ -213,7 +213,7 @@ function executable(name: string): string {
   }
   throw new Error(`Required host command not found: ${name}`);
 }
-function quote(value: string): string {
+export function quote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
 function requireName(name: string): string {
@@ -292,7 +292,7 @@ export function start(options: Options): { name: string; checkout: string } {
     const via = [container, "exec", "-i", name, "sh", "-c"]
       .map(quote)
       .join(" ");
-    run("hc", ["machine", "add", "--temp", "--name", name, "--via", via]);
+    run("hc", ["machine", "add", "--name", name, "--via", via]);
   } catch (error) {
     try {
       run("hc", ["machine", "rm", name]);
@@ -482,7 +482,8 @@ export function parseOptions(command: string, args: string[]) {
 }
 
 async function main(): Promise<void> {
-  const [command, ...args] = process.argv.slice(2);
+  const [requested, ...args] = process.argv.slice(2);
+  const command = requested === "codex" ? "run" : requested;
   if (command === "browser") {
     execFileSync(
       "container",
@@ -517,7 +518,7 @@ async function main(): Promise<void> {
   }
   if (!["build", "scan", "start", "run"].includes(command)) {
     console.log(
-      "Usage: mise run <build|scan|start|codex|stop|shell|attach|browser|status> [options]\nOptions: --checkout PATH --name cs-NAME --home PATH --image TAG --dns IP --cpus N --memory 4G\nBuild: --variant base|browser\nCodex arguments follow --. Stop/shell/attach/browser take a guest name.",
+      "Usage: codex-container <build|scan|start|codex|stop|shell|attach|browser|status> [options]\nOptions: --checkout PATH --name cs-NAME --home PATH --image TAG --dns IP --cpus N --memory 4G\nBuild: --variant base|browser\nCodex arguments follow --. Stop/shell/attach/browser take a guest name.",
     );
     if (command && command !== "--help") process.exitCode = 1;
     return;
@@ -537,7 +538,9 @@ async function main(): Promise<void> {
   const { name, checkout } = start(values);
   console.log(name);
   if (command === "start") {
-    console.error(`Stop with: mise run stop ${name}`);
+    console.error(
+      `Stop with: codex-container stop ${name} (or mise run stop ${name} in the launcher repo)`,
+    );
     return;
   }
   try {
