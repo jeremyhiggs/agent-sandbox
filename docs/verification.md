@@ -37,7 +37,7 @@ packages. Compiler runtime libraries are retained where other tools require them
 | Tag                     | Image index digest                                                        |
 | ----------------------- | ------------------------------------------------------------------------- |
 | `codex-sandbox:local`   | `sha256:90fb4a5ef879f857a1e8fa4d539ec9c157818ba4b393d75b29305b6244d5f8bd` |
-| `codex-sandbox:browser` | `sha256:14f51e4723b62816ac74b2a698b40fce4f5be956255828762e07fbd223e3a61d` |
+| `codex-sandbox:browser` | `sha256:4deb04d6986c66498e22a09c9340510e599d76fef4831d172b92756470ff9459` |
 
 Shared tool versions: Node 24.22.3, pnpm 11.28.12, mise 2026.11.7, Codex 0.167.2,
 agent-browser 0.43.0, hc 0.1.20, and JJ 0.47.1. The browser image uses Google Chrome
@@ -49,11 +49,10 @@ The pinned Wolfi base index was checked to contain both architectures.
 After removing Debian support, the Wolfi core rebuilt successfully and passed
 its runtime inventory/tool checks and Trivy scan with no findings. All 20 tests,
 lint/type checks, and four Wolfi lock checks passed. A fresh CodeRabbit review
-of the removal returned no findings. The browser rebuild reached its exact
-132-package inventory check, then failed on a Chrome download timeout; a retry
-failed fetching the APK index. Its tag above remains the earlier image. The
-updated image scripts, mounted read-only into that image, passed the inventory,
-tool, and agent-browser page/title checks. The temporary builder was removed.
+of the removal returned no findings. A subsequent cold browser rebuild completed
+successfully and passed its exact 132-package inventory, tool, agent-browser
+page/title checks, and Trivy scan with no findings. Its current digest is recorded
+above. Initial build failures and the follow-up probes are described below.
 
 - `mise run check`: formatting, script lint, TypeScript checking, documentation
   lint, TOML formatting, Dockerfile lint, GitHub Actions lint, lock validation,
@@ -125,8 +124,32 @@ were exercised on arm64. The retired Debian architecture locks came from actual
 package installs. Both Wolfi architecture locks came from APK simulation.
 Only Wolfi core/browser profiles are supported and included in the CI matrix.
 
-Local testing encountered intermittent Apple guest networking failures, including
-with an explicit DNS resolver. Restarting the container services restored access.
-The default is now `1.1.1.1`. The `--dns` option and `CONTAINER_DNS` environment
-variable select another resolver. No host DNS settings were changed.
-Restart services only after checking that no unrelated guests need them.
+## Network investigation
+
+Two browser rebuild attempts initially failed: one during the Chrome response
+body with `read ETIMEDOUT`, and one fetching the APK index. On 16 November 2026,
+the following probes distinguished a reproducible DNS fault from those earlier
+transfer failures:
+
+- A fresh guest using Apple's default gateway resolver, `192.168.64.1`, failed
+  DNS queries immediately with `ECONNREFUSED`. Supplying the APK server address
+  with curl's `--resolve` made the same guest download the index successfully.
+- A guest using `1.1.1.1` downloaded the APK index and full 203 MB Chrome archive.
+  The Chrome transfer took about 12 seconds in the guest and 19 seconds on the
+  host. Node's `fetch` also downloaded the full archive in about 12 seconds and
+  matched the pinned SHA-256. These are individual measurements, not benchmarks.
+- A fresh builder started explicitly with `--dns 1.1.1.1` had that resolver in
+  `/etc/resolv.conf`. The unchanged browser build then completed, including the
+  archive checksum check. The resulting image passed the browser and scan tasks.
+
+The confirmed fault is a refusing default DNS resolver. It does not establish why
+the earlier connection stalled after receiving its response headers: that failure
+did not recur during these probes. Starting a fresh builder and the later success
+do not prove a builder reset fixed it. No installer logic or host DNS settings
+were changed. Diagnostic guests and the temporary builder were removed.
+
+The launcher already defaults to `1.1.1.1`; `--dns` and `CONTAINER_DNS` select
+another resolver. Apple's [networking documentation](https://github.com/apple/container/blob/1.7.1/docs/networking.md)
+describes the overrides. Earlier service restarts restored connectivity in local
+testing, but services should only be restarted after checking that no unrelated
+guests need them.
