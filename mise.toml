@@ -138,7 +138,10 @@ run = "node scripts/security.ts browser"
 
 [tasks."lock:update"]
 description = "Generate the native apko lockfile for both architectures"
-run = "apko lock image/apko.yaml --output image/apko.lock.json"
+run = [
+  "apko lock image/apko.yaml --output image/apko.lock.json",
+  "chmod 644 image/apko.lock.json",
+]
 
 [tasks."lock:tools"]
 description = "Refresh CLI archive checksums and the image's pnpm dependency lock"
