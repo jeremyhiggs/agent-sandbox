@@ -1,299 +1,114 @@
-# Image verification
+# Verification
 
-Local checks use Apple silicon and Apple container 1.7.1.
-All locally built images below are Linux arm64; dated sections identify the build pipeline.
+Local verification uses Apple silicon and Apple container 1.7.1. All four
+`agent-sandbox` images have passed Linux arm64 builds and runtime checks.
+Both architecture locks are validated; actual amd64 builds and runtime checks
+remain configured CI coverage.
 
-## Named sandboxes and opt-in mounts (17 November 2026)
+## Checks
 
-The CLI and image tags are now `agent-sandbox`. The renamed four-image build,
-exact image inventories, native agent flags, and real browser page checks passed.
-Trivy reported zero vulnerabilities in all four images at this advisory snapshot.
-The pnpm audits, repository scan, and browser freshness check also passed.
+| Area                    | Command                | Verified behavior                                                                                       |
+| ----------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------- |
+| Source and locks        | `mise run check`       | Formatting, lint, types, unit tests, and dependency-lock consistency                                    |
+| Image build             | `mise run build`       | Four Dockerfile targets sharing the locked apko OS and browser base                                     |
+| Image runtime           | `mise run check:image` | Exact APK inventory, tool versions, agent separation, launch flags, and a real browser page load        |
+| Image vulnerabilities   | `mise run scan`        | Trivy scans of all four images; zero findings in the captured reports                                   |
+| Repository dependencies | `mise run audit`       | Root and profile pnpm audits, repository Trivy scan, and Chrome stable-version freshness                |
+| Installed launcher      | `mise run smoke:cli`   | Persistent lifecycle, independent terminals, worktrees, opt-in mounts, and isolated host hc supervision |
+| Herdr app               | `mise run smoke:herdr` | Two guest terminals in the same existing app space/tab, with the selected session preserved             |
 
-The current suite contains 28 unit tests. The installed CLI smoke test uses fake
-state, a linked worktree, and a separate host hc core. It verified:
+Run image checks after building the images. The installed-launcher check requires
+`mise run install`; the Herdr app check requires Herdr to be open.
 
-- Explicit commands and names, literal argv, piped input, and workload exit codes.
-- Two independent guest terminals; exiting one leaves the other running.
-- Interactive foreground attachment, detach without ending the guest terminal,
-  and reattachment by terminal name through a separate test core.
-- Guest files surviving stop/start, explicit deletion, and `--rm` on sandbox stop.
-- No host agent state or skills by default; individual and combined opt-in mounts.
-- Writable Codex, Claude, and OpenCode state directories, read-only shared skills,
-  and a guest-local Claude config copy without host writeback.
-- Guest/host hc isolation, selected-core registration, restoration after restart,
-  and teardown even when the caller selects another hc core session.
+## Images and reproducibility
 
-The live Herdr check also passed: two guest terminals joined the same existing
-space and tab without changing the selected session. This check is repeatable
-with `mise run smoke:herdr`, requires the app to be open, and uses its own sandbox.
-App IDs are qualified by machine. Guest labels can join only spaces belonging to
-that sandbox; they cannot join a host or another sandbox's space through this
-transport. Host core-session selection is a separate supported option.
+The supported tags are `agent-sandbox:base`, `agent-sandbox:codex`,
+`agent-sandbox:opencode`, and `agent-sandbox:claude`. Each agent image adds only
+its selected agent CLI to the shared browser-equipped base.
 
-No real account login, credential export, or model request was tested. The checks
-cover file mounting and process/session management, not subscription acceptance.
-The earlier sections below describe prior CLI behavior at each dated milestone.
+The native apko lock contains 131 arm64 packages and 132 amd64 packages. Checks
+compare the installed APK inventory with that lock. Tool installation uses
+checksum-pinned archives and frozen pnpm graphs, with vendor lifecycle scripts
+disabled. Versions and artifact pins are defined in `mise.toml` and the files
+listed in [reproducibility](reproducibility.md).
 
-## Native apko OS base (17 November 2026)
+The OS build checks also verified:
 
-The OS now uses `image/apko.yaml` and apko's native JSON lockfile, generated with
-apko 1.5.1. It contains 131 arm64 packages and 132 amd64 packages. The Dockerfile
-extracts the locked OS layer, then adds the existing browser and agent tooling.
-No temporary package-resolution VM, custom solver-output parser, or intermediate
-image registry is used.
+- A changed recipe without a regenerated lock fails apko's checksum validation.
+- Repeated and parallel builds produce identical, verified OS layer archives.
+- Private build directories and atomic publication prevent overlapping builds
+  from reading partial output.
+- A batch prepares its OS once and reuses it for all four images.
 
-The following local checks passed:
+Image runtime checks exercise mise, Node, pnpm, Git, gh, JJ, hc,
+agent-browser, and the selected agent. They check native agent launch flags,
+OpenSSH 10.4 or newer, and absence of npm, npx, generic compilers, make, and
+pkg-config. A Chrome page is opened through agent-browser, its title is read,
+and the browser is closed.
 
-- All four profiles built with Apple's `container build` and the Dockerfile.
-- Exact installed APK inventory, CLI versions/launch flags, gh, agent separation,
-  excluded build tools/npm, and actual Chrome/agent-browser page checks passed.
-- The installed launcher passed the disposable worktree, persistent agent state,
-  read-only skills, isolated hc supervision, exit-status, and teardown smoke test.
-- All 26 unit tests, types, formatting/lint, dependency audits, repository Trivy,
-  and browser freshness checks passed.
-- Trivy found no vulnerabilities in any of the four apko-based images at this
-  advisory snapshot. Full reports remain under `.artifacts/`.
-- Changing the recipe without regenerating the lock failed with apko's native
-  config-checksum mismatch error before building.
-- Repeated OS builds produced the same gzip layer digest. Parallel preparation
-  also completed with identical, verified archive contents. Builds use private
-  work directories, atomically published digest-named archives, and separate SBOM
-  directories. A batch prepares its OS once and reuses it for all four profiles.
+## Lifecycle, mounts, and terminals
 
-The repeated OS layer digest was
-`sha256:6ed0e3dc5746f83250b3833ed798369a7875f0d0947f54349e74371e377b6552`.
-SPDX SBOMs are generated by apko and retained under `.artifacts/apko/sbom/`;
-CI preserves them alongside the vulnerability reports.
+The installed CLI smoke test uses fake agent state, a separate linked Git
+worktree, and scratch hc configuration in a separate core session. It verifies:
 
-Both architecture locks are validated; actual amd64 image builds and Docker
-runtime checks remain configured CI coverage. The GitHub remote and local `main`
-branch are configured, but no commits have been pushed in this work.
+- Explicit commands and names, literal arguments, piped input, and workload exit
+  codes, including a nonzero exit.
+- Preservation of the caller's working directory and shared worktree file/index
+  writes.
+- Multiple independent guest terminals; exiting one leaves the others and the
+  sandbox running.
+- Foreground attachment, detach without ending the guest terminal, and
+  reattachment by terminal name.
+- Guest-local files surviving stop/start, explicit deletion, and automatic
+  removal on sandbox stop when created with `--rm`.
+- Exclusion of host agent state and skills by default, plus individual and
+  combined opt-in mounts.
+- Writable Codex, Claude, and OpenCode state directories, read-only shared
+  skills, and a guest-local Claude config copy without host writeback.
+- Host-file exclusion and rejection of symlinks that would widen mount access.
+- Independent guest hc state, selected host-core registration, restoration after
+  restart, and cleanup after the caller changes its hc session.
 
-## Browser base before the apko migration (16 November 2026)
+The app smoke test creates its own sandbox in the normal host core. It verifies
+creation of a dedicated sandbox space and joining that sandbox's existing space
+and tab without changing the selected session. It removes its test sandbox and
+registration afterward.
 
-The four-profile design was built and tested locally on 16 November 2026.
-All four images include Chrome for Testing 157.0.8103.78, agent-browser 0.43.0,
-GitHub CLI 2.104.0, mise, pnpm, Git, JJ, and hc. The OS lock contains 133 arm64
-packages; the resolved amd64 lock contains 134 packages.
+Herdr app IDs are qualified by machine. Guest labels can join only spaces
+belonging to that sandbox. Host hc core-session selection is a separate option.
 
-| Image                      | Compressed image data | Agent CLI           | Trivy findings |
-| -------------------------- | --------------------: | ------------------- | -------------- |
-| `agent-container:base`     |              498.2 MB | None                | 0              |
-| `agent-container:codex`    |              667.5 MB | Codex 0.167.2       | 0              |
-| `agent-container:opencode` |              630.4 MB | OpenCode 2.3.0      | 0              |
-| `agent-container:claude`   |              670.6 MB | Claude Code 2.1.325 | 0              |
+These smoke tests exercise file sharing and process/session management with
+fake authentication state. They make no model requests and do not establish
+provider login or subscription acceptance.
 
-Image configuration inspection confirmed that all three agent images share the
-base image's exact 19 filesystem layers. Each agent adds its own locked CLI graph
-above that base. These are compressed image sizes, not unique host disk usage.
-Build cache and exported archives need additional temporary disk space.
+## Reports and scan coverage
 
-The final checks passed:
+The ignored local reports are:
 
-- `mise run check`: all format/lint/type checks, locks, and 26 unit tests.
-- `mise run audit`: root and four profile pnpm audits, Trivy repository scan,
-  and Chrome stable-version check.
-- `mise run check:image`: exact OS inventories; tools including gh; expected
-  agent version and supported launch flags; absence of other agents, npm/npx,
-  compilers, make, and pkg-config; an actual agent-browser page load in each image.
-- `mise run scan`: all four final images, with no reported vulnerabilities at
-  any severity in this advisory snapshot. Full JSON reports are in `.artifacts/`.
-- `mise run smoke:cli`: bare shell, literal arguments, piped direct execution,
-  exit code 42 propagation, worktree Git writes, read-only skills, private host
-  file exclusion, persistent state for all agents, rejection of noninteractive
-  Herdr workloads, retained guest supervision, and complete teardown.
-- A separate interactive test against the normal Herdr core created a guest
-  session automatically. Selected space, tab, and pane stayed unchanged. Ending
-  the guest terminal removed its VM, registration, and remote app session.
-
-The smoke tests used fake agent state and separate hc configuration. No account
-login or model request was made. Native help/version checks validate the installed
-CLI flags; they do not establish successful provider authentication or an actual
-interactive prompt exchange. Claude/OpenCode Linux login state is persistent but
-was not authenticated in this run. Host Keychain login is not imported.
-
-Review fixes include preventing guest-owned persistent-home symlinks from adding
-host mounts, retaining management of old `cs-` guests, correcting the Codex state
-probe, and rejecting watch-only noninteractive Herdr execution. The symlink
-regressions failed before the mount fix and passed afterward.
-
-Both architecture locks are validated. Actual builds and runtime checks here
-were arm64; amd64 build/browser/scan coverage is configured in CI and has not run
-on a hosted runner. The repo still has no remote, so scheduled CI is not active.
-Scanner coverage of native downloaded binaries and Chrome remains limited.
-
-## Historical image comparison
-
-| Image                                             | Compressed image data | Critical | High | Medium |  Low | Unknown |
-| ------------------------------------------------- | --------------------: | -------: | ---: | -----: | ---: | ------: |
-| Initial Debian slim with Chromium and build tools |                768 MB |        2 |  515 |    729 | 1095 |      25 |
-| Trimmed Debian slim, pnpm, no browser/build tools |                389 MB |        1 |  127 |    173 |  205 |       7 |
-| Wolfi core, pnpm, no browser/build tools          |                350 MB |        0 |    0 |      0 |    0 |       0 |
-| Wolfi with optional Chrome runtime                |                653 MB |        0 |    0 |      0 |    0 |       0 |
-
-Sizes are rounded decimal MB from the image manifest, not VM disk usage. Counts
-combine Trivy's OS and discoverable Node inventories. The initial Debian total
-includes two medium Node findings; the later images have none. These are
-package/advisory entries, not unique CVEs or individually validated exploit paths.
-The two distributions use different advisory feeds and package inventories, so
-zero findings alone does not establish that one distribution has no vulnerabilities.
-
-The Debian comparison used a complete, frozen 133-package lock. Its critical
-finding was `CVE-2026-60002` in OpenSSH. It shipped the Debian 10.0 package line
-and failed the minimum OpenSSH 10.4 policy. Trivy listed no fixed versions for its
-128 high/critical entries. These are historical comparison results. Debian build
-support and locks have since been removed, and both local Debian sandbox images
-were deleted, reclaiming 4.21 GB.
-
-The default Wolfi image has OpenSSH 10.6p2, locked repository packages, and no
-libxml2 dependency. The browser profile brings libxml2 2.15.0 through its runtime
-libraries; that inventory has no current Trivy findings. Neither profile includes
-npm, npx, a generic compiler, make, pkg-config, or the removed development-header
-packages. Compiler runtime libraries are retained where other tools require them.
-
-## Built artifacts
-
-| Tag                     | Image index digest                                                        |
-| ----------------------- | ------------------------------------------------------------------------- |
-| `codex-sandbox:local`   | `sha256:90fb4a5ef879f857a1e8fa4d539ec9c157818ba4b393d75b29305b6244d5f8bd` |
-| `codex-sandbox:browser` | `sha256:4deb04d6986c66498e22a09c9340510e599d76fef4831d172b92756470ff9459` |
-
-Shared tool versions: Node 24.22.3, pnpm 11.28.12, mise 2026.11.7, Codex 0.167.2,
-agent-browser 0.43.0, hc 0.1.20, and JJ 0.47.1. The browser image uses Google Chrome
-for Testing 157.0.8103.78, with separate verified archive hashes for arm64 and amd64.
-The pinned Wolfi base index was checked to contain both architectures.
-
-## Passed checks
-
-After removing Debian support, the Wolfi core rebuilt successfully and passed
-its runtime inventory/tool checks and Trivy scan with no findings. All 20 tests,
-lint/type checks, and four Wolfi lock checks passed. A fresh CodeRabbit review
-of the removal returned no findings. A subsequent cold browser rebuild completed
-successfully and passed its exact 132-package inventory, tool, agent-browser
-page/title checks, and Trivy scan with no findings. Its current digest is recorded
-above. Initial build failures and the follow-up probes are described below.
-
-- `mise run check`: formatting, script lint, TypeScript checking, documentation
-  lint, TOML formatting, Dockerfile lint, GitHub Actions lint, lock validation,
-  and 20 unit tests.
-- `mise run audit`: both Node package audits and the Trivy repository scan pass
-  without findings. The repository scan includes development dependencies.
-  Browser freshness passes too. A deliberately stale pin failed that separate audit.
-- Cold builds of both Wolfi profiles and the Debian core comparison passed their
-  exact OS inventory checks. The image tools used a frozen pnpm install and
-  checksum-verified CLI archives. All eight then-current OS locks passed validation;
-  four Wolfi locks remain after removing Debian support.
-- `mise run smoke` and `mise run smoke:browser`: linked Git worktree access, skill
-  directory/file symlinks, read-only skill enforcement, excluded host-file access,
-  shared file/index writes, separate guest hc state, host hc reading a guest
-  terminal, persistent mounted files, the default `1.1.1.1` DNS setting, and teardown.
-- Image checks assert pnpm and the required tools are usable, removed executables
-  are absent, and OpenSSH is at least 10.4. Browser checks open a page, read its
-  title through agent-browser, and close the engine.
-- The normal host Codex directory mounted in Wolfi, and `codex login status`
-  recognized its file-backed ChatGPT login. No inference request was sent and
-  credentials were not displayed or copied into the repository/image.
-- On-demand installation in a core guest passed agent-browser's automatic Chrome
-  discovery and the same page/title test without an executable-path override.
-  Wolfi requires `libnss`, not its metadata-only `nss` package, plus `libudev`.
-  The installer does not require GTK or a compiler toolchain.
-- Earlier installer rejection/recovery checks passed: repeat installation,
-  recreation of a missing activation link, bad archive checksum rejection, and
-  temporary-file cleanup. Freshness rejection now belongs to `audit:browser`,
-  separately from the reproducible browser installer.
-- Both final Wolfi images passed their Trivy gates. The trimmed Debian scan failed
-  as expected; there are no suppression entries or ignore-unfixed policy.
-- Fresh Wolfi guests passed mise repository-config checks: Python 3.13.18 and Go
-  1.27.4 installation, config-defined environment variables, a task, and Python SSL
-  import. Mise's APK bootstrap installed and ran `file` 5.48 from `mise.toml`.
-  The guests used no host mounts and were removed after the checks. See
-  [the base image decision](base-image.md) for package catalogue measurements.
-- The dependency-locking review covered correctness, testing, maintainability,
-  reliability, security, and adversarial cases, with no actionable findings.
-  The simplification pass found no worthwhile changes.
-
-Earlier initial-image checks also verified the named Codex terminal task's
-`--version` exit/teardown path and a disposable Linux JJ linked workspace layout.
-No host repository was initialized with JJ.
-
-## Installed launcher and Herdr app
-
-`mise run install` installed the launcher in the user's local bin directory.
-Repeated installation succeeded, and `codex-container --help` worked outside
-this repository. `mise run smoke:cli` passed from a separate linked worktree
-without `--checkout`, proving that the command preserves the caller's directory.
-
-The app test exposed a distinction missed by the earlier hc-only checks: Herdr
-rejects machines registered with `hc machine add --temp`. After removing that
-flag, the app opened a remote space and rendered the guest terminal, checkout
-path, Codex version, and hc version without errors. No model request was sent.
-The test space, guest, and registration were removed afterward. Smoke tests now
-assert that registrations are visible rather than marked temporary.
-
-The final smoke check ran in a separate background hc terminal. The test itself
-uses a fresh `HC_SESSION`, scratch XDG configuration/state, and a short socket
-path suitable for macOS. It passed the worktree, skills, isolation, registration,
-terminal-output, and teardown checks, then stopped its own core and removed the
-scratch state. It does not alter the normal core's machine registrations or UI.
-The installed CLI also passed a default launch without a subcommand. It ran the
-guest's Codex with `--version`, returned successfully, and removed that guest and
-registration. This check uses a terminal rather than a pipe because `hc attach`
-requires a terminal. All 21 unit tests and lint/type/lock checks passed too.
-
-## Scan coverage and CI limits
-
-The complete ignored local reports are:
-
-- `.artifacts/vulnerabilities-codex-sandbox-local.json`
-- `.artifacts/vulnerabilities-codex-sandbox-browser.json`
-- `.artifacts/vulnerabilities-codex-sandbox-debian.json`
-- `.artifacts/vulnerabilities.json` (initial baseline)
+- `.artifacts/vulnerabilities-agent-sandbox-base.json`
+- `.artifacts/vulnerabilities-agent-sandbox-codex.json`
+- `.artifacts/vulnerabilities-agent-sandbox-opencode.json`
+- `.artifacts/vulnerabilities-agent-sandbox-claude.json`
 - `.artifacts/vulnerabilities-repo.json`
 - `.artifacts/browser-release.json`
 
-Trivy recognized 68 OS packages in the core image and 132 in the browser image,
-plus discoverable Node packages. It did not establish complete CVE coverage for
-the separately downloaded Chrome binary. The installer checks the pinned archive
-checksum. The independent browser audit checks Google's stable version. The installer records provenance in
-`/opt/chrome/vendor-release.json`. Those checks complement the scan; zero reported
-findings is not a guarantee of vulnerability-free software.
+Native apko SPDX SBOMs are retained under `.artifacts/apko/sbom/`.
 
-CI builds and checks both core/browser variants on Linux amd64 and arm64, then
-runs the same vulnerability gate and uploads each report. It also runs lint,
-tests, repository Trivy and Node dependency audits, and browser freshness. The
-schedule is daily at **00:00 UTC** (`0 0 * * *`). Hosted CI has not run: the
-repository is local and has no remote. Full image behavior and macOS hc integration
-were exercised on arm64. The retired Debian architecture locks came from actual
-package installs. Both Wolfi architecture locks came from APK simulation.
-Only Wolfi core/browser profiles are supported and included in the CI matrix.
+The captured image and dependency reports contain zero findings. HIGH or
+CRITICAL findings fail the gates even when no fixed version is available;
+complete reports retain the lower severities too.
 
-## Network investigation
+Trivy covers the recognized Wolfi and discoverable Node inventories. Its coverage
+of downloaded native binaries and Chrome is limited. Archive checksums, browser
+release provenance, and the separate Chrome freshness check complement the scan.
 
-Two browser rebuild attempts initially failed: one during the Chrome response
-body with `read ETIMEDOUT`, and one fetching the APK index. On 16 November 2026,
-the following probes distinguished a reproducible DNS fault from those earlier
-transfer failures:
+## CI coverage
 
-- A fresh guest using Apple's default gateway resolver, `192.168.64.1`, failed
-  DNS queries immediately with `ECONNREFUSED`. Supplying the APK server address
-  with curl's `--resolve` made the same guest download the index successfully.
-- A guest using `1.1.1.1` downloaded the APK index and full 203 MB Chrome archive.
-  The Chrome transfer took about 12 seconds in the guest and 19 seconds on the
-  host. Node's `fetch` also downloaded the full archive in about 12 seconds and
-  matched the pinned SHA-256. These are individual measurements, not benchmarks.
-- A fresh builder started explicitly with `--dns 1.1.1.1` had that resolver in
-  `/etc/resolv.conf`. The unchanged browser build then completed, including the
-  archive checksum check. The resulting image passed the browser and scan tasks.
+CI configures Docker image builds, runtime checks, and Trivy scans for Linux
+amd64 and arm64. It also runs source checks, pnpm audits, repository Trivy, and
+browser freshness checks. Image reports, repository reports, and native OS SBOMs
+are uploaded as artifacts.
 
-The confirmed fault is a refusing default DNS resolver. It does not establish why
-the earlier connection stalled after receiving its response headers: that failure
-did not recur during these probes. Starting a fresh builder and the later success
-do not prove a builder reset fixed it. No installer logic or host DNS settings
-were changed. Diagnostic guests and the temporary builder were removed.
-
-The launcher already defaults to `1.1.1.1`; `--dns` and `CONTAINER_DNS` select
-another resolver. Apple's [networking documentation](https://github.com/apple/container/blob/1.7.1/docs/networking.md)
-describes the overrides. Earlier service restarts restored connectivity in local
-testing, but services should only be restarted after checking that no unrelated
-guests need them.
+The schedule is daily at **00:00 UTC** (`0 0 * * *`), with push, pull request,
+and manual triggers. Hosted CI has not run yet; local arm64 verification is the
+executed evidence described above.
