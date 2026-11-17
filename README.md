@@ -42,6 +42,7 @@ From another folder, use `mise -C /path/to/agent-sandbox run install`.
 Run commands from any directory. No checkout is shared by default; the guest
 starts in its own persistent `/workspace`. Use `--git` to share the current
 checkout or linked worktree, or `--git PATH` to select one elsewhere.
+Sharing requires Git on the host; Git validates the selected metadata before startup.
 A command is required; a bare invocation prints help. Creation requires a name:
 
 ```sh
@@ -235,6 +236,8 @@ checkout contents, user configuration, or credentials.
 With `--git [PATH]`, Git metadata inside the selected checkout stays visible.
 For linked worktrees, the validated common Git store is shared automatically
 so status, staging, and commits work. A path inside a checkout selects its root.
+Ordinary checkouts and registered linked worktrees are supported; symlinked
+`.git` paths, separate Git directories, and submodule gitfiles are not.
 This does not share host Git configuration or credentials. No additional
 metadata stores are discovered through `.jj` links.
 

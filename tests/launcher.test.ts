@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import {
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   symlinkSync,
@@ -12,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  createSandbox,
   mountPlan,
   parseInvocation,
   repositoryMounts,
@@ -46,11 +48,77 @@ test("linked worktree mounts checkout and common Git directory without main chec
       new Set(repositoryMounts(work)),
       new Set([work, join(main, ".git")]),
     );
+    const common = process.env.GIT_COMMON_DIR;
+    process.env.GIT_COMMON_DIR = join(root, "not-a-git-store");
+    try {
+      assert.deepEqual(
+        new Set(repositoryMounts(work)),
+        new Set([work, join(main, ".git")]),
+      );
+    } finally {
+      if (common === undefined) delete process.env.GIT_COMMON_DIR;
+      else process.env.GIT_COMMON_DIR = common;
+    }
     assert.deepEqual([...mountPlan(undefined, root).keys()], []);
     assert.deepEqual(
       new Set(mountPlan(work, root).keys()),
       new Set([work, join(main, ".git")]),
     );
+    const git = readFileSync(join(work, ".git"), "utf8").trim().slice(8);
+    const head = readFileSync(join(git, "HEAD"), "utf8");
+    writeFileSync(join(git, "HEAD"), "invalid HEAD");
+    assert.throws(() => mountPlan(work, root), /Invalid Git metadata/);
+    writeFileSync(join(git, "HEAD"), head);
+    const unrelated = join(root, "unrelated");
+    execFileSync("git", ["init", "-q", unrelated]);
+    writeFileSync(join(git, "commondir"), join(unrelated, ".git"));
+    assert.throws(() => mountPlan(work, root), /registered.*common Git store/);
+  }));
+
+test("invalid Git selections fail before looking for the container runtime", () =>
+  fixture((root) => {
+    const empty = join(root, "empty"),
+      malformed = join(root, "malformed"),
+      badHead = join(root, "bad-head"),
+      special = join(root, "special"),
+      outside = join(root, "outside"),
+      linked = join(root, "linked");
+    mkdirSync(join(empty, ".git"), { recursive: true });
+    mkdirSync(malformed);
+    writeFileSync(join(malformed, ".git"), "not a gitfile");
+    mkdirSync(outside);
+    mkdirSync(linked);
+    symlinkSync(join(empty, ".git"), join(linked, ".git"));
+    execFileSync("git", ["init", "-q", badHead]);
+    writeFileSync(join(badHead, ".git", "HEAD"), "invalid HEAD");
+    mkdirSync(special);
+    execFileSync("mkfifo", [join(special, ".git")]);
+    const bin = join(root, "bin");
+    mkdirSync(bin);
+    symlinkSync(
+      execFileSync("which", ["git"], { encoding: "utf8" }).trim(),
+      join(bin, "git"),
+    );
+    const path = process.env.PATH;
+    process.env.PATH = bin;
+    try {
+      for (const git of [
+        empty,
+        malformed,
+        badHead,
+        special,
+        outside,
+        linked,
+        join(malformed, ".git"),
+      ])
+        assert.throws(
+          () =>
+            createSandbox({ git, home: root, name: "invalid", herdr: false }),
+          /Invalid Git metadata|Unrecognized Git pointer|No Git checkout|Git metadata cannot be a symlink|--git requires a directory/,
+        );
+    } finally {
+      process.env.PATH = path;
+    }
   }));
 
 test("Git sharing does not resolve .jj links into additional host mounts", () =>

@@ -72,6 +72,9 @@ worktree, and scratch hc configuration in a separate core session. It verifies:
 - Independent guest hc state, selected host-core registration, restoration after
   restart, and cleanup after the caller changes its hc session.
 
+Unit checks also reject invalid Git selections before runtime discovery and
+worktree pointers redirected to an unrelated common Git store.
+
 The app smoke test creates its own sandbox in the normal host core. It verifies
 creation of a dedicated sandbox space and joining that sandbox's existing space
 and tab without changing the selected session. It removes its test sandbox and

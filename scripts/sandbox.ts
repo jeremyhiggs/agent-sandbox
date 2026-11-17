@@ -15,7 +15,7 @@ import {
   statSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { delimiter, dirname, join, resolve, sep } from "node:path";
+import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { buildOS } from "./build-os.ts";
@@ -58,39 +58,55 @@ function directory(path: string): boolean {
 }
 
 function gitMetadata(path: string): string {
-  const canonical = realpathSync(path);
-  if (
-    !file(join(canonical, "HEAD")) ||
-    !directory(join(canonical, "objects")) ||
-    !(
-      directory(join(canonical, "refs")) || file(join(canonical, "packed-refs"))
-    )
-  ) {
+  const git = executable("git");
+  const env = { ...process.env };
+  for (const key of Object.keys(env))
+    if (key.startsWith("GIT_")) delete env[key];
+  try {
+    return realpathSync(
+      execFileSync(git, ["rev-parse", "--resolve-git-dir", path], {
+        cwd: "/",
+        env,
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim(),
+    );
+  } catch {
     throw new Error(`Invalid Git metadata directory: ${path}`);
   }
-  return canonical;
 }
 
 export function repositoryMounts(checkout: string): string[] {
   const mounts = new Set([realpathSync(checkout)]);
   let git = join(checkout, ".git");
-  if (file(git)) {
+  const info = lstatSync(git, { throwIfNoEntry: false });
+  if (info?.isSymbolicLink())
+    throw new Error(`Git metadata cannot be a symlink: ${git}`);
+  if (info?.isDirectory()) gitMetadata(git);
+  else if (file(git)) {
     const text = readFileSync(git, "utf8").trim();
     if (!text.startsWith("gitdir: "))
       throw new Error(`Unrecognized Git pointer: ${git}`);
-    git = resolve(checkout, text.slice(8));
+    git = realpathSync(resolve(checkout, text.slice(8)));
     const backlink = join(git, "gitdir");
-    if (!file(backlink) || pointer(backlink) !== join(checkout, ".git")) {
+    const commondir = join(git, "commondir");
+    if (
+      !file(backlink) ||
+      pointer(backlink) !== join(checkout, ".git") ||
+      !file(commondir)
+    ) {
       throw new Error(
         `Git metadata is not registered to this worktree: ${git}`,
       );
     }
-    mounts.add(
-      gitMetadata(
-        file(join(git, "commondir")) ? pointer(join(git, "commondir")) : git,
-      ),
-    );
-  }
+    const common = gitMetadata(pointer(commondir));
+    if (git !== join(common, "worktrees", basename(git)))
+      throw new Error(
+        `Worktree is not registered in this common Git store: ${git}`,
+      );
+    gitMetadata(git);
+    mounts.add(common);
+  } else if (info) throw new Error(`Invalid Git metadata: ${git}`);
   return [...mounts].sort();
 }
 
@@ -209,8 +225,11 @@ export function mountPlan(
 
 export function checkoutRoot(path: string): string {
   let current = realpathSync(path);
+  if (!directory(current))
+    throw new Error(`--git requires a directory: ${path}`);
   while (true) {
-    if (existsSync(join(current, ".git"))) return current;
+    if (lstatSync(join(current, ".git"), { throwIfNoEntry: false }))
+      return current;
     const parent = dirname(current);
     if (parent === current) throw new Error(`No Git checkout found at ${path}`);
     current = parent;
@@ -334,10 +353,7 @@ function appTarget(
   };
 }
 
-export function createSandbox(options: Options): {
-  name: string;
-  checkout?: string;
-} {
+export function createSandbox(options: Options): string {
   const checkout =
     options.git !== undefined ? checkoutRoot(resolve(options.git)) : undefined;
   const workdir = checkout ?? "/workspace";
@@ -430,7 +446,7 @@ export function createSandbox(options: Options): {
     run(container, ["delete", "--force", name]);
     throw error;
   }
-  return { name, checkout };
+  return name;
 }
 
 export function stop(name: string, remove = false): void {
@@ -885,7 +901,7 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`);
   }
   let name = existing!;
   if (command === "run") {
-    name = createSandbox(options).name;
+    name = createSandbox(options);
   } else if (command === "start") {
     const { labels } = sandboxInfo(name);
     run("container", ["start", name]);
