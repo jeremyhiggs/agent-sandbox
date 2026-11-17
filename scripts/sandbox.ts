@@ -24,10 +24,18 @@ import { checkVulnerabilities } from "./vulnerabilities.ts";
 export const ROOT = resolve(import.meta.dirname, "..");
 export const PROFILES = ["base", "codex", "opencode", "claude"] as const;
 export type Agent = "codex" | "opencode" | "claude";
+export const MOUNTS = ["codex", "claude", "opencode", "skills"] as const;
+export type HostMount = (typeof MOUNTS)[number];
 export const DEFAULT_DNS = process.env.CONTAINER_DNS ?? "1.1.1.1";
 const LABEL = "dev.agent-container.managed";
 const LEGACY_LABEL = "dev.codex-sandbox.managed";
 const HERDR_LABEL = "dev.agent-container.herdr";
+const CHECKOUT_LABEL = "dev.agent-container.checkout";
+const CORE_LABEL = "dev.agent-container.hc-session";
+const CORE_SOCKET_LABEL = "dev.agent-container.hc-socket";
+const VIA_LABEL = "dev.agent-container.hc-via";
+const SPACE_LABEL = "dev.agent-container.herdr-space";
+const TAB_LABEL = "dev.agent-container.herdr-tab";
 
 export function run(command: string, args: string[]): string {
   return execFileSync(command, args, {
@@ -140,22 +148,17 @@ export function withSymlinkTargets(paths: string[], home?: string): string[] {
   return [...mounts].sort();
 }
 
-function agentStateHome(home: string, agent: Agent): string {
-  return join(home, ".local", "share", "agent-container", agent, "home");
-}
-
 export function mountPlan(
   checkout: string,
   home: string,
-  agent?: Agent,
+  selected: readonly HostMount[] = [],
 ): Map<string, boolean> {
   const mounts = new Map(
     repositoryMounts(checkout).map((path) => [path, false]),
   );
-  if (agent === "codex") {
+  if (selected.includes("codex")) {
     const codex = join(home, ".codex");
-    if (!existsSync(codex))
-      throw new Error(`Missing Codex directory: ${codex}`);
+    if (!directory(codex)) throw new Error(`Missing Codex directory: ${codex}`);
     if (lstatSync(codex).isSymbolicLink())
       throw new Error(
         `Codex directory cannot be a symlink in this initial version: ${codex}`,
@@ -172,31 +175,38 @@ export function mountPlan(
         }
       }
     }
-    const codexContent = [
-      "skills",
-      "plugins",
-      "config.toml",
-      "auth.json",
-      "AGENTS.md",
-    ]
-      .map((name) => join(codex, name))
-      .filter(existsSync);
-    for (const path of withSymlinkTargets(codexContent, home))
-      mounts.set(path, false);
   }
-  if (agent === "opencode" || agent === "claude") {
-    const state = agentStateHome(home, agent);
-    for (let path = state; path !== home; path = dirname(path)) {
-      if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink())
-        throw new Error(
-          `A persistent home cannot use symlinked ancestors: ${path}`,
-        );
+  for (const profile of ["claude", "opencode"] as const) {
+    if (!selected.includes(profile)) continue;
+    const paths = (
+      profile === "claude"
+        ? [join(home, ".claude")]
+        : [
+            join(home, ".config", "opencode"),
+            join(home, ".local", "share", "opencode"),
+            join(home, ".local", "state", "opencode"),
+          ]
+    ).filter(existsSync);
+    if (!paths.length)
+      throw new Error(`No ${profile} state directories found in ${home}`);
+    for (const state of paths) {
+      if (!directory(state))
+        throw new Error(`Expected an agent state directory: ${state}`);
+      for (let path = state; path !== home; path = dirname(path)) {
+        if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink())
+          throw new Error(
+            `Agent state cannot use symlinked ancestors: ${path}`,
+          );
+      }
+      // Files inside shared, writable state are guest-controlled. Never expand
+      // their symlinks into additional host mounts on subsequent launches.
+      mounts.set(state, false);
     }
-    mkdirSync(state, { recursive: true });
-    mounts.set(state, false);
   }
   const skills = join(home, ".agents", "skills");
-  if (existsSync(skills)) {
+  if (selected.includes("skills")) {
+    if (!existsSync(skills))
+      throw new Error(`Missing agent skills directory: ${skills}`);
     for (const path of withSymlinkTargets([skills], home))
       mounts.set(path, true);
   }
@@ -239,14 +249,10 @@ function executable(name: string): string {
 export function quote(value: string): string {
   return `'${value.replaceAll("'", "'\\''")}'`;
 }
-function requireName(name: string, existing = false): string {
-  if (
-    !(existing ? /^(?:ac|cs)-[a-z0-9-]{1,50}$/ : /^ac-[a-z0-9-]{1,50}$/).test(
-      name,
-    )
-  )
+function requireName(name: string): string {
+  if (!/^[a-z0-9][a-z0-9_-]{0,49}$/.test(name))
     throw new Error(
-      "Names must start with ac- and use lowercase letters, digits, hyphens",
+      "--name is required; use 1-50 lowercase letters, digits, hyphens or underscores",
     );
   return name;
 }
@@ -263,39 +269,130 @@ export type Options = {
   engine?: string;
   profile?: string;
   prompt?: string;
+  mount?: HostMount[];
+  detach?: boolean;
+  rm?: boolean;
+  terminal?: string;
+  "hc-session"?: string;
+  "herdr-space"?: string;
+  "herdr-tab"?: string;
 };
 
-export function start(options: Options): { name: string; checkout: string } {
+type Labels = Record<string, string>;
+
+function hostHC(labels: Labels, args: string[]): string {
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    HC_SESSION: labels[CORE_LABEL] || "default",
+  };
+  // An explicit core session must not be overridden by an inherited socket.
+  delete env.HC_SOCKET;
+  if (labels[CORE_SOCKET_LABEL]) env.HC_SOCKET = labels[CORE_SOCKET_LABEL];
+  return execFileSync("hc", args, {
+    encoding: "utf8",
+    stdio: ["inherit", "pipe", "inherit"],
+    env,
+  });
+}
+
+function registerSandbox(name: string, labels: Labels): void {
+  if (labels[HERDR_LABEL] !== "true") return;
+  executable("hc");
+  const machines = JSON.parse(hostHC(labels, ["machine", "ls", "--json"]));
+  const via =
+    labels[VIA_LABEL] ||
+    [executable("container"), "exec", "-i", name, "sh", "-c"]
+      .map(quote)
+      .join(" ");
+  const existing = machines.machines.find(
+    (machine: { name: string }) => machine.name === name,
+  );
+  if (existing) {
+    if (existing.via === true && existing.target === via) return;
+    throw new Error(
+      `hc machine name already exists with another transport: ${name}`,
+    );
+  }
+  hostHC(labels, ["machine", "add", "--name", name, "--via", via]);
+}
+
+function sandboxInfo(name: string) {
+  requireName(name);
+  const info = JSON.parse(run("container", ["inspect", name]))[0];
+  const labels: Labels = info.configuration.labels ?? {};
+  if (labels[LABEL] !== "true" && labels[LEGACY_LABEL] !== "true")
+    throw new Error(`Guest is not owned by this launcher: ${name}`);
+  return { info, labels };
+}
+
+function appTarget(
+  name: string,
+  options: Options,
+): { space: string; tab: string } {
+  const prefix = name + "/";
+  if (!options["herdr-space"]?.startsWith(prefix))
+    throw new Error(
+      `Herdr spaces are scoped to a machine; choose a space belonging to ${name}. Use --hc-session at creation to choose the host core.`,
+    );
+  const spaces = JSON.parse(run("herdr-app", ["ls"])).spaces;
+  const space = spaces.find(
+    (space: { id: string }) => space.id === options["herdr-space"],
+  );
+  if (!space)
+    throw new Error(`Herdr space not found: ${options["herdr-space"]}`);
+  const tab = options["herdr-tab"];
+  if (
+    tab &&
+    (!tab.startsWith(prefix) ||
+      !space.tabs.some((item: { id: string }) => item.id === tab))
+  )
+    throw new Error(`Herdr tab is not in that space: ${tab}`);
+  // The app prefixes guest labels with the registered machine name itself.
+  return {
+    space: space.id.slice(prefix.length),
+    tab: tab?.slice(prefix.length) ?? "",
+  };
+}
+
+export function createSandbox(options: Options): {
+  name: string;
+  checkout: string;
+} {
   const checkout = checkoutRoot(resolve(options.checkout ?? process.cwd()));
   const home = realpathSync(options.home ?? homedir());
-  const mounts = mountPlan(checkout, home, options.agent);
+  const mounts = mountPlan(checkout, home, options.mount);
+  const claudeConfig = join(home, ".claude.json");
+  if (
+    options.mount?.includes("claude") &&
+    existsSync(claudeConfig) &&
+    !file(claudeConfig)
+  )
+    throw new Error(
+      `Claude configuration must be a regular file: ${claudeConfig}`,
+    );
   const container = executable("container");
-  const name = requireName(options.name ?? `ac-${randomUUID().slice(0, 10)}`);
-  if (options.herdr) {
-    executable("hc");
-    const machines = JSON.parse(run("hc", ["machine", "ls", "--json"]));
-    if (
-      machines.machines.some(
-        (machine: { name: string }) => machine.name === name,
-      )
-    )
-      throw new Error(`hc machine name already exists: ${name}`);
-  }
-  const guestHome =
-    options.agent === "codex"
-      ? home
-      : options.agent
-        ? agentStateHome(home, options.agent)
-        : "/root";
+  const name = requireName(options.name ?? "");
+  const labels: Labels = {
+    [LABEL]: "true",
+    [HERDR_LABEL]: String(options.herdr),
+    [CHECKOUT_LABEL]: checkout,
+    [CORE_LABEL]: options["hc-session"] ?? process.env.HC_SESSION ?? "default",
+    [CORE_SOCKET_LABEL]: options["hc-session"]
+      ? ""
+      : (process.env.HC_SOCKET ?? ""),
+    [VIA_LABEL]: [container, "exec", "-i", name, "sh", "-c"]
+      .map(quote)
+      .join(" "),
+    [SPACE_LABEL]: options.herdr ? `sp${randomUUID().slice(0, 8)}` : "",
+    [TAB_LABEL]: "",
+  };
+  // Only selected subdirectories are mounted; this home path itself is guest-local.
+  const guestHome = home;
   const args = [
     "run",
     "--detach",
     "--name",
     name,
-    "--label",
-    `${LABEL}=true`,
-    "--label",
-    `${HERDR_LABEL}=${options.herdr}`,
     "--cpus",
     options.cpus ?? "4",
     "--memory",
@@ -306,11 +403,15 @@ export function start(options: Options): { name: string; checkout: string } {
     `HOME=${guestHome}`,
     "--env",
     "AGENT_BROWSER_SOCKET_DIR=/tmp/agent-browser",
+    "--env",
+    "HC_SOCKET=/tmp/agent-hc.sock",
     "--dns",
     options.dns ?? DEFAULT_DNS,
   ];
-  if (options.agent === "codex")
-    args.push("--env", `CODEX_HOME=${join(home, ".codex")}`);
+  for (const [key, value] of Object.entries(labels))
+    args.push("--label", `${key}=${value}`);
+  if (options.rm) args.push("--rm");
+  args.push("--env", `CODEX_HOME=${join(home, ".codex")}`);
   console.error(`Starting ${name}; host mounts:`);
   for (const [path, readonly] of mounts) {
     if (/[:,\n]/.test(path))
@@ -320,10 +421,12 @@ export function start(options: Options): { name: string; checkout: string } {
   }
   run(container, [
     ...args,
-    options.image ?? `agent-container:${options.agent ?? "base"}`,
+    options.image ?? `agent-sandbox:${options.agent ?? "base"}`,
   ]);
   try {
     run(container, ["exec", name, "mkdir", "-p", guestHome]);
+    if (options.agent === "codex")
+      run(container, ["exec", name, "mkdir", "-p", join(home, ".codex")]);
     run(container, [
       "exec",
       name,
@@ -334,24 +437,11 @@ export function start(options: Options): { name: string; checkout: string } {
       "safe.directory",
       checkout,
     ]);
-    const skills = join(home, ".agents", "skills");
-    if (guestHome !== home && existsSync(skills)) {
-      run(container, ["exec", name, "mkdir", "-p", join(guestHome, ".agents")]);
-      run(container, [
-        "exec",
-        name,
-        "ln",
-        "-sfn",
-        skills,
-        join(guestHome, ".agents", "skills"),
-      ]);
-    }
-    if (options.herdr) {
-      const via = [container, "exec", "-i", name, "sh", "-c"]
-        .map(quote)
-        .join(" ");
-      run("hc", ["machine", "add", "--name", name, "--via", via]);
-    }
+    // Claude atomically replaces this home-level file. Copy its initial config
+    // instead of mounting a single file or exposing the host's entire home.
+    if (options.mount?.includes("claude") && file(claudeConfig))
+      run(container, ["copy", claudeConfig, `${name}:${claudeConfig}`]);
+    registerSandbox(name, labels);
   } catch (error) {
     // Registration is the last operation; a failed add must not remove an existing machine.
     run(container, ["delete", "--force", name]);
@@ -360,22 +450,29 @@ export function start(options: Options): { name: string; checkout: string } {
   return { name, checkout };
 }
 
-export function stop(name: string): void {
-  requireName(name, true);
-  const info = JSON.parse(run("container", ["inspect", name]));
-  if (
-    info[0].configuration.labels?.[LABEL] !== "true" &&
-    info[0].configuration.labels?.[LEGACY_LABEL] !== "true"
-  )
-    throw new Error(`Guest is not owned by this launcher: ${name}`);
+export function stop(name: string, remove = false): void {
+  const { labels } = sandboxInfo(name);
   try {
-    if (
-      info[0].configuration.labels?.[HERDR_LABEL] === "true" ||
-      info[0].configuration.labels?.[LEGACY_LABEL] === "true"
-    )
-      run("hc", ["machine", "rm", name]);
+    if (labels[HERDR_LABEL] === "true" || labels[LEGACY_LABEL] === "true") {
+      const machines = JSON.parse(hostHC(labels, ["machine", "ls", "--json"]));
+      const machine = machines.machines.find(
+        (machine: { name: string }) => machine.name === name,
+      );
+      if (machine) {
+        const via =
+          labels[VIA_LABEL] ||
+          [executable("container"), "exec", "-i", name, "sh", "-c"]
+            .map(quote)
+            .join(" ");
+        if (machine.via !== true || machine.target !== via)
+          throw new Error(
+            `Refusing to remove a different hc transport: ${name}`,
+          );
+        hostHC(labels, ["machine", "rm", name]);
+      }
+    }
   } finally {
-    run("container", ["delete", "--force", name]);
+    run("container", remove ? ["delete", "--force", name] : ["stop", name]);
   }
 }
 
@@ -400,7 +497,7 @@ export function buildImage(
     `OS_ARCHIVE=${osArchive}`,
     "--pull",
     "--tag",
-    options.image ?? `agent-container:${variant}`,
+    options.image ?? `agent-sandbox:${variant}`,
     "--target",
     variant,
   ];
@@ -482,56 +579,99 @@ async function foreground(command: string, argv: string[]): Promise<number> {
 
 async function workload(
   name: string,
-  checkout: string,
   argv: string[],
-  herdr: boolean,
+  options: Options,
+  custom: boolean,
 ): Promise<number> {
-  if (!herdr)
+  const { labels } = sandboxInfo(name);
+  const checkout = labels[CHECKOUT_LABEL] ?? "/";
+  if (options["herdr-space"]) {
+    if (labels[HERDR_LABEL] !== "true")
+      throw new Error("This sandbox was created without --herdr");
+    const target = appTarget(name, options);
+    labels[SPACE_LABEL] = target.space;
+    labels[TAB_LABEL] = target.tab;
+  }
+  if (custom && !options.detach && !options["herdr-space"]) {
     return foreground("container", [
       "exec",
       process.stdin.isTTY && process.stdout.isTTY ? "-it" : "-i",
+      "--workdir",
+      checkout,
       name,
       ...argv,
     ]);
-  const id = randomUUID().slice(0, 8);
-  run("hc", [
+  }
+  const terminal =
+    options.terminal ??
+    (options.agent ?? "shell") + "-" + randomUUID().slice(0, 8);
+  const args = [
     "run",
     "--bg",
-    "--on",
-    name,
     "--name",
-    "agent",
+    terminal,
     "--cwd",
     checkout,
     "--no-parent",
     "--outlive-parent",
-    "--label",
-    `herdr.space=sp${id}`,
-    "--label",
-    `herdr.tab=tb${id}`,
-    "--",
-    ...argv,
+  ];
+  if (labels[HERDR_LABEL] === "true") {
+    args.push("--label", "herdr.space=" + labels[SPACE_LABEL]);
+    args.push(
+      "--label",
+      "herdr.tab=" + (labels[TAB_LABEL] || "tb" + randomUUID().slice(0, 8)),
+    );
+  }
+  const created = JSON.parse(
+    run("container", ["exec", name, "hc", ...args, "--", ...argv]),
+  );
+  console.error(
+    "Terminal: " +
+      created.address +
+      "; attach with: agent-sandbox attach --name " +
+      name +
+      " --terminal " +
+      created.address,
+  );
+  if (options.detach) {
+    console.log(created.address);
+    return 0;
+  }
+  const code = await foreground("container", [
+    "exec",
+    "-it",
+    name,
+    "hc",
+    "attach",
+    created.address,
   ]);
-  // Herdr adopts unknown space/tab IDs without changing the selected session.
-  const code = await foreground("hc", ["attach", `${name}/agent`]);
-  const terminal = JSON.parse(run("hc", ["get", "--json", `${name}/agent`]));
-  return terminal.finished_ms !== null ? (terminal.exit_code ?? 1) : code;
+  const result = JSON.parse(
+    run("container", ["exec", name, "hc", "get", "--json", created.address]),
+  );
+  return result.finished_ms !== null ? (result.exit_code ?? 1) : code;
 }
 
 export function parseInvocation(input: string[]) {
   let args = [...input];
-  let command = "run";
+  let command = args.length ? "" : "help";
   if (
-    ["build", "scan", "start", "stop", "shell", "attach", "status"].includes(
-      args[0],
-    )
+    [
+      "build",
+      "scan",
+      "run",
+      "start",
+      "stop",
+      "delete",
+      "shell",
+      "attach",
+      "terminals",
+      "status",
+    ].includes(args[0])
   )
     command = args.shift()!;
   if (args[0] === "exec")
     throw new Error("Use --exec COMMAND ARG... instead of an exec subcommand");
   let name: string | undefined;
-  if (["stop", "shell", "attach"].includes(command))
-    name = requireName(args.shift() ?? "", true);
   let custom: string[] | undefined;
   const flags: string[] = [];
   for (let index = 0; index < args.length; index++) {
@@ -559,6 +699,10 @@ export function parseInvocation(input: string[]) {
     "profile",
     "agent",
     "prompt",
+    "terminal",
+    "hc-session",
+    "herdr-space",
+    "herdr-tab",
   ];
   const { values } = parseArgs({
     args,
@@ -567,11 +711,61 @@ export function parseInvocation(input: string[]) {
         names.map((name) => [name, { type: "string" as const }]),
       ),
       herdr: { type: "boolean", default: false },
+      mount: { type: "string", multiple: true, default: [] },
+      detach: { type: "boolean", short: "d", default: false },
+      rm: { type: "boolean", default: false },
       help: { type: "boolean", short: "h" },
     },
   });
   if (values.help) command = "help";
   const options = values as Options;
+  if (!command) throw new Error("Choose a command; run agent-sandbox --help");
+  if (
+    ["run", "start", "stop", "delete", "shell", "attach", "terminals"].includes(
+      command,
+    )
+  )
+    name = requireName(options.name ?? "");
+  if (options.terminal && !/^[a-z0-9_-]{1,32}$/.test(options.terminal))
+    throw new Error(
+      "--terminal must be an ID or name of 1-32 lowercase letters, digits, hyphens or underscores",
+    );
+  if (command === "attach" && !options.terminal)
+    throw new Error(
+      "attach requires --terminal; use terminals --name NAME to discover terminals",
+    );
+  if (
+    options["hc-session"] &&
+    !/^[a-zA-Z0-9_-]{1,32}$/.test(options["hc-session"])
+  )
+    throw new Error("Invalid --hc-session name");
+  if (options["herdr-tab"] && !options["herdr-space"])
+    throw new Error("--herdr-tab requires --herdr-space");
+  if (options["herdr-space"] || options["hc-session"]) options.herdr = true;
+  if (options["herdr-space"] && command !== "shell")
+    throw new Error(
+      "--herdr-space selects a terminal's space with shell; a new sandbox gets its own machine-scoped space",
+    );
+  if (
+    command !== "run" &&
+    (options.mount?.length ||
+      options.home ||
+      options.checkout ||
+      options.image ||
+      options.cpus ||
+      options.memory ||
+      options.rm ||
+      options["hc-session"] ||
+      (options.herdr && !options["herdr-space"])) &&
+    !["build", "scan", "help"].includes(command)
+  )
+    throw new Error(
+      "Image, resource, mount, --rm and Herdr settings are chosen at creation with run",
+    );
+  if (options.detach && !["run", "start", "shell", "help"].includes(command))
+    throw new Error("--detach is supported by run, start and shell");
+  for (const mount of options.mount ?? [])
+    if (!MOUNTS.includes(mount)) throw new Error(`Unknown mount: ${mount}`);
   if (options.agent && !["codex", "opencode", "claude"].includes(options.agent))
     throw new Error(`Unknown agent: ${options.agent}`);
   if (options.prompt !== undefined && !options.agent)
@@ -582,7 +776,7 @@ export function parseInvocation(input: string[]) {
     throw new Error("Engine must be container or docker");
   if (options.engine === "docker" && !["build", "scan"].includes(command))
     throw new Error("Guest launches use Apple's container runtime");
-  if (!["run"].includes(command) && custom)
+  if (!["run", "start", "shell"].includes(command) && custom)
     throw new Error("--exec is only supported when launching a workload");
   let argv = custom ?? ["bash"];
   if (!custom && options.agent) {
@@ -605,7 +799,7 @@ export function parseInvocation(input: string[]) {
           : ["--", options.prompt]),
       );
   }
-  return { command, options, argv, name };
+  return { command, options, argv, name, custom: custom !== undefined };
 }
 
 async function main(): Promise<void> {
@@ -614,17 +808,32 @@ async function main(): Promise<void> {
     options,
     argv,
     name: existing,
+    custom,
   } = parseInvocation(process.argv.slice(2));
   if (command === "help") {
-    console.log(`Usage: agent-container [options] [--exec COMMAND ARG...]
-Bare invocation opens a shell in the browser-equipped base image.
-  --agent codex|opencode|claude    Select agent image, state and default command
+    console.log(`Usage: agent-sandbox COMMAND [options] [--exec COMMAND ARG...]
+run --name NAME                Create a persistent sandbox and open its shell/agent
+start --name NAME              Restart a stopped sandbox and open a new shell/agent
+shell --name NAME              Open another shell/agent in a running sandbox
+attach --name NAME --terminal ID   Reconnect to an existing terminal
+terminals --name NAME          Discover terminal IDs and names
+stop --name NAME               Stop the VM; retain its filesystem (unless --rm)
+delete --name NAME             Destroy the sandbox and unregister it
+status                        List managed sandboxes, including stopped ones
+build / scan                  Build or scan images
+  --agent codex|opencode|claude    Select initial image (run) and program
   --prompt TEXT                  Interactive initial prompt; requires --agent
-  --herdr                        Create a background Herdr session; keep current selection
+  -d, --detach                   Launch without attaching; sandbox stays running
+  --rm                           Remove when the sandbox stops; chosen with run
+  --herdr                        Register with host hc and show terminals in Herdr
+  --hc-session NAME              Select host core session (implies --herdr)
+  --herdr-space ID [--herdr-tab ID]   With shell: select a space/tab belonging to this sandbox
+  --terminal ID_OR_NAME           Name a new terminal or select one to attach
   --exec COMMAND ARG...          Literal custom command; consumes remaining arguments
-  --checkout PATH --home PATH --name ac-NAME --image TAG --dns IP --cpus N --memory 4G
-Commands: build [--profile base|codex|opencode|claude], scan, start, stop NAME, shell NAME, attach NAME, status
-Build/scan: --engine container|docker. start retains a guest until stop.
+  --mount codex|claude|opencode|skills  Share host state (repeatable; none by default)
+Creation: --checkout PATH --home PATH --image TAG --dns IP --cpus N --memory 4G
+Build/scan: --engine container|docker --profile base|codex|opencode|claude
+Exiting or detaching any terminal leaves its sandbox running. Bare invocation prints help.
 Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`);
     return;
   }
@@ -636,18 +845,18 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`);
         item.configuration.labels?.[LABEL] === "true" ||
         item.configuration.labels?.[LEGACY_LABEL] === "true"
       )
-        console.log(`${item.configuration.id}\t${item.status}`);
+        console.log(`${item.configuration.id}\t${item.status.state}`);
     return;
   }
-  if (command === "stop") {
-    stop(existing!);
+  if (command === "stop" || command === "delete") {
+    stop(existing!, command === "delete");
     return;
   }
-  if (command === "shell" || command === "attach") {
-    process.exitCode =
-      command === "shell"
-        ? await foreground("container", ["exec", "-it", existing!, "bash"])
-        : await foreground("hc", ["attach", `${existing}/agent`]);
+  if (command === "terminals") {
+    sandboxInfo(existing!);
+    process.stdout.write(
+      run("container", ["exec", existing!, "hc", "ls", "--all", "--json"]),
+    );
     return;
   }
   if (command === "build") {
@@ -659,29 +868,41 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`);
     scan(
       options.engine ?? "container",
       options.image ??
-        `agent-container:${options.agent ?? options.profile ?? "base"}`,
+        `agent-sandbox:${options.agent ?? options.profile ?? "base"}`,
     );
     return;
   }
   if (
-    command === "run" &&
-    options.herdr &&
+    !options.detach &&
+    (!custom || options["herdr-space"]) &&
     (!process.stdin.isTTY || !process.stdout.isTTY)
   )
     throw new Error(
-      "--herdr workloads require interactive stdin and stdout; omit --herdr for piped input or redirected output",
+      "Interactive terminals require a TTY; use --detach or --exec for scripts and pipes",
     );
-  const { name, checkout } = start(options);
-  if (command === "start") {
-    console.log(name);
-    console.error(`Stop with: agent-container stop ${name}`);
+  if (command === "attach") {
+    sandboxInfo(existing!);
+    process.exitCode = await foreground("container", [
+      "exec",
+      "-it",
+      existing!,
+      "hc",
+      "attach",
+      options.terminal!,
+    ]);
     return;
   }
-  try {
-    process.exitCode = await workload(name, checkout, argv, options.herdr);
-  } finally {
-    stop(name);
+  let name = existing!;
+  if (command === "run") {
+    name = createSandbox(options).name;
+  } else if (command === "start") {
+    const { labels } = sandboxInfo(name);
+    run("container", ["start", name]);
+    registerSandbox(name, labels);
+  } else if (command === "shell") {
+    sandboxInfo(name);
   }
+  process.exitCode = await workload(name, argv, options, custom);
 }
 
 if (

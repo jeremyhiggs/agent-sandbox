@@ -24,6 +24,7 @@ const home = join(root, "home"),
 const binary = values.cli ?? process.execPath;
 const prefix = values.cli ? [] : [join(ROOT, "scripts", "sandbox.ts")];
 const names = new Set<string>();
+const guestName = (suffix: string) => `ac-smoke-${process.pid}-${suffix}`;
 let coreStarted = false;
 function invoke(args: string[], input?: string) {
   return execFileSync(binary, [...prefix, ...args], {
@@ -34,9 +35,13 @@ function invoke(args: string[], input?: string) {
   });
 }
 function launch(suffix: string, args: string[], input?: string) {
-  const name = `ac-smoke-${process.pid}-${suffix}`;
+  const name = guestName(suffix);
   names.add(name);
-  return invoke(["--name", name, "--home", home, ...args], input);
+  return invoke(["run", "--name", name, "--home", home, ...args], input);
+}
+function destroy(name: string) {
+  invoke(["delete", "--name", name]);
+  names.delete(name);
 }
 try {
   mkdirSync(join(home, ".codex", "skills"), { recursive: true });
@@ -49,6 +54,10 @@ try {
   );
   const sentinel = join(home, "private-host-file");
   writeFileSync(sentinel, "not mounted");
+  mkdirSync(join(home, ".claude"));
+  mkdirSync(join(home, ".config", "opencode"), { recursive: true });
+  mkdirSync(join(home, ".local", "share", "opencode"), { recursive: true });
+  writeFileSync(join(home, ".claude.json"), '{"smoke":true}\n');
   run("git", ["init", "-q", main]);
   run("git", ["-C", main, "worktree", "add", "--orphan", "-qb", "smoke", work]);
   // Ordinary execution must never call hc, even with an unusable hc on PATH.
@@ -57,14 +66,16 @@ try {
   writeFileSync(join(fakeBin, "hc"), "#!/bin/sh\nexit 91\n", { mode: 0o755 });
   const normalPath = process.env.PATH;
   process.env.PATH = `${fakeBin}:${normalPath}`;
+  assert.match(invoke([]), /Usage: agent-sandbox COMMAND/);
   assert.match(
     launch(
       "shell",
-      [],
+      ["--exec", "bash"],
       "printf 'base-shell-ready\\n'\ncommand -v google-chrome\nexit\n",
     ),
     /base-shell-ready/,
   );
+  destroy(guestName("shell"));
   const probe = `
     const fs = require('node:fs'), assert = require('node:assert/strict');
     assert.equal(process.cwd(), ${JSON.stringify(work)});
@@ -76,15 +87,25 @@ try {
     console.log('literal argument:', process.argv[1]);
   `;
   assert.match(
-    launch("literal", ["--exec", "node", "-e", probe, "a b; $(not-shell)"]),
+    launch("literal", [
+      "--mount",
+      "skills",
+      "--exec",
+      "node",
+      "-e",
+      probe,
+      "a b; $(not-shell)",
+    ]),
     /a b; \$\(not-shell\)/,
   );
-  const failedName = `ac-smoke-${process.pid}-exit`;
+  destroy(guestName("literal"));
+  const failedName = guestName("exit");
   names.add(failedName);
   const failed = spawnSync(
     binary,
     [
       ...prefix,
+      "run",
       "--name",
       failedName,
       "--home",
@@ -97,14 +118,28 @@ try {
     { cwd: work, encoding: "utf8" },
   );
   assert.equal(failed.status, 42, failed.stderr);
+  assert.match(invoke(["status"]), new RegExp(`${failedName}\\trunning`));
+  destroy(failedName);
   for (const agent of ["codex", "opencode", "claude"]) {
-    const stateProbe = `const fs=require('node:fs'); fs.writeFileSync((process.env.CODEX_HOME || process.env.HOME) + '/agent-state', '${agent}'); console.log(process.env.HOME)`;
-    launch(agent, ["--agent", agent, "--exec", "node", "-e", stateProbe]);
     const guestHome =
       agent === "codex"
         ? join(home, ".codex")
-        : join(home, ".local", "share", "agent-container", agent, "home");
+        : agent === "claude"
+          ? join(home, ".claude")
+          : join(home, ".local", "share", "opencode");
+    const stateProbe = `const fs=require('node:fs'); fs.writeFileSync(${JSON.stringify(join(guestHome, "agent-state"))}, '${agent}'); console.log(process.env.HOME)`;
+    launch(agent, [
+      "--agent",
+      agent,
+      "--mount",
+      agent,
+      "--exec",
+      "node",
+      "-e",
+      stateProbe,
+    ]);
     assert.equal(readFileSync(join(guestHome, "agent-state"), "utf8"), agent);
+    destroy(guestName(agent));
     assert.ok(
       launch(`${agent}-version`, [
         "--agent",
@@ -114,7 +149,42 @@ try {
         "--version",
       ]).trim(),
     );
+    destroy(guestName(`${agent}-version`));
   }
+  const privateState = [
+    join(home, ".codex"),
+    join(home, ".claude"),
+    join(home, ".claude.json"),
+    join(home, ".config", "opencode"),
+    join(home, ".local", "share", "opencode"),
+    join(home, ".agents", "skills"),
+  ];
+  launch("state-private", [
+    "--exec",
+    "node",
+    "-e",
+    `const fs=require('node:fs'), assert=require('node:assert/strict'); for (const path of ${JSON.stringify(privateState)}) assert.equal(fs.existsSync(path), false, path); console.log('host state excluded')`,
+  ]);
+  destroy(guestName("state-private"));
+  launch("all-mounts", [
+    "--mount",
+    "codex",
+    "--mount",
+    "claude",
+    "--mount",
+    "opencode",
+    "--mount",
+    "skills",
+    "--exec",
+    "node",
+    "-e",
+    `const fs=require('node:fs'), assert=require('node:assert/strict'); for (const path of ${JSON.stringify(privateState)}) assert.ok(fs.existsSync(path), path); fs.writeFileSync(${JSON.stringify(join(home, ".claude.json"))}, '{}'); console.log('all opt-in mounts available')`,
+  ]);
+  assert.equal(
+    readFileSync(join(home, ".claude.json"), "utf8"),
+    '{"smoke":true}\n',
+  );
+  destroy(guestName("all-mounts"));
   process.env.PATH = normalPath;
   // A separate core cannot disturb the user's active Herdr session.
   process.env.HC_SESSION = "smoke";
@@ -126,11 +196,11 @@ try {
   coreStarted = true;
   const noninteractive = spawnSync(
     binary,
-    [...prefix, "--herdr", "--exec", "cat"],
+    [...prefix, "run", "--name", `ac-smoke-${process.pid}-rejected`, "--herdr"],
     { cwd: work, input: "must not be dropped\n", encoding: "utf8" },
   );
   assert.equal(noninteractive.status, 1);
-  assert.match(noninteractive.stderr, /require interactive stdin and stdout/);
+  assert.match(noninteractive.stderr, /require a TTY/);
   const registered = JSON.parse(run("hc", ["machine", "ls", "--json"]));
   assert.equal(
     registered.machines.length,
@@ -139,9 +209,23 @@ try {
   );
   const retained = `ac-smoke-${process.pid}-retained`;
   names.add(retained);
-  assert.equal(
-    invoke(["start", "--name", retained, "--home", home, "--herdr"]).trim(),
-    retained,
+  assert.match(
+    invoke([
+      "run",
+      "--name",
+      retained,
+      "--home",
+      home,
+      "--herdr",
+      "--hc-session",
+      "smoke",
+      "--detach",
+      "--terminal",
+      "first",
+      "--exec",
+      "bash",
+    ]),
+    /^t/,
   );
   const machine = JSON.parse(
     run("hc", ["machine", "ls", "--json"]),
@@ -155,6 +239,101 @@ try {
     0,
     "guest must not inherit host hc connections",
   );
+  invoke(["shell", "--name", retained, "--detach", "--terminal", "second"]);
+  const terminals = JSON.parse(
+    invoke(["terminals", "--name", retained]),
+  ).terminals;
+  assert.equal(
+    terminals.filter((t: { state: string }) => t.state === "live").length,
+    2,
+  );
+  assert.equal(
+    invoke(["shell", "--name", retained, "--exec", "cat"], "piped input\n"),
+    "piped input\n",
+  );
+  run("hc", ["send", `${retained}/first`, "exit"]);
+  run("hc", ["wait", `${retained}/first`, "--timeout", "10"]);
+  assert.equal(
+    JSON.parse(run("hc", ["get", `${retained}/second`, "--json"])).state,
+    "live",
+  );
+  const foreground = JSON.parse(
+    run("hc", [
+      "run",
+      "--bg",
+      "--name",
+      "foreground-test",
+      "--cwd",
+      work,
+      "--no-parent",
+      "--outlive-parent",
+      "--",
+      binary,
+      ...prefix,
+      "shell",
+      "--name",
+      retained,
+      "--terminal",
+      "foreground",
+    ]),
+  ).address;
+  run("hc", ["wait", foreground, "--output", "Terminal:", "--timeout", "10"]);
+  run("hc", ["send", foreground, "printf 'foreground-ready\\n'"]);
+  run("hc", [
+    "wait",
+    foreground,
+    "--output",
+    "foreground-ready",
+    "--timeout",
+    "10",
+  ]);
+  run("hc", ["keys", foreground, "ctrl+\\"]);
+  run("hc", ["wait", foreground, "--timeout", "10"]);
+  assert.equal(
+    JSON.parse(run("hc", ["get", `${retained}/foreground`, "--json"])).state,
+    "live",
+    "Detaching must preserve the guest terminal",
+  );
+  const attached = JSON.parse(
+    run("hc", [
+      "run",
+      "--bg",
+      "--name",
+      "attach-test",
+      "--cwd",
+      work,
+      "--no-parent",
+      "--outlive-parent",
+      "--",
+      binary,
+      ...prefix,
+      "attach",
+      "--name",
+      retained,
+      "--terminal",
+      "foreground",
+    ]),
+  ).address;
+  run("hc", ["wait", attached, "--output", "bash-", "--timeout", "10"]);
+  run("hc", ["send", attached, "exit"]);
+  run("hc", ["wait", attached, "--timeout", "10"]);
+  assert.equal(
+    JSON.parse(run("hc", ["get", `${retained}/foreground`, "--json"])).state,
+    "finished",
+  );
+  assert.equal(
+    JSON.parse(run("hc", ["get", `${retained}/second`, "--json"])).state,
+    "live",
+  );
+  invoke([
+    "shell",
+    "--name",
+    retained,
+    "--exec",
+    "node",
+    "-e",
+    "require('node:fs').writeFileSync('/tmp/guest-marker','retained')",
+  ]);
   run("hc", [
     "run",
     "--bg",
@@ -171,7 +350,32 @@ try {
   ]);
   run("hc", ["wait", `${retained}/probe`, "--timeout", "30"]);
   assert.match(run("hc", ["read", `${retained}/probe`]), /herdr-guest-ready/);
-  invoke(["stop", retained]);
+  process.env.HC_SESSION = "different-session";
+  invoke(["stop", "--name", retained]);
+  assert.match(invoke(["status"]), new RegExp(`${retained}\\tstopped`));
+  assert.equal(
+    invoke(["start", "--name", retained, "--exec", "cat", "/tmp/guest-marker"]),
+    "retained",
+  );
+  invoke(["delete", "--name", retained]);
+  names.delete(retained);
+  process.env.HC_SESSION = "smoke";
+  const disposable = `ac-smoke-${process.pid}-rm`;
+  names.add(disposable);
+  invoke([
+    "run",
+    "--name",
+    disposable,
+    "--home",
+    home,
+    "--rm",
+    "--exec",
+    "true",
+  ]);
+  invoke(["stop", "--name", disposable]);
+  names.delete(disposable);
+  assert.doesNotMatch(invoke(["status"]), new RegExp(disposable));
+  for (const name of names) invoke(["delete", "--name", name]);
   const guests = JSON.parse(
     run("container", ["ls", "--all", "--format", "json"]),
   );
@@ -191,7 +395,7 @@ try {
   );
   assert.ok(existsSync(sentinel));
   console.log(
-    "Base shell, literal argv, exit status, agent state, worktree, isolation, optional Herdr and teardown passed",
+    "Persistent lifecycle, independent terminals, literal argv, pipes, agent state, worktree, opt-in mounts and isolated Herdr supervision passed",
   );
 } finally {
   try {
@@ -200,10 +404,13 @@ try {
     );
     for (const guest of guests)
       if (names.has(guest.configuration.id))
-        invoke(["stop", guest.configuration.id]);
+        invoke(["delete", "--name", guest.configuration.id]);
   } finally {
     try {
-      if (coreStarted) run("hc", ["server", "stop"]);
+      if (coreStarted) {
+        process.env.HC_SESSION = "smoke";
+        run("hc", ["server", "stop"]);
+      }
     } finally {
       rmSync(root, { recursive: true });
       rmSync(coreHome, { recursive: true });

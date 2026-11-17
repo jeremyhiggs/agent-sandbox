@@ -65,7 +65,7 @@ description = "Export and scan the Apple image; fail on HIGH or CRITICAL CVEs"
 run = "node scripts/profiles.ts scan"
 
 [tasks.smoke]
-description = "Exercise a disposable worktree, guest tools, and host hc registration"
+description = "Exercise persistent lifecycle, terminals, opt-in mounts, and isolated host hc"
 run = "node scripts/smoke.ts"
 
 [tasks.setup]
@@ -73,32 +73,44 @@ description = "Install the locked Node type definitions"
 run = "pnpm install --frozen-lockfile --ignore-scripts"
 
 [tasks.install]
-description = "Install agent-container in ~/.local/bin (--bin-dir PATH to override)"
+description = "Install agent-sandbox in ~/.local/bin (--bin-dir PATH to override)"
 run = "node scripts/install.ts"
 
 [tasks."smoke:cli"]
 description = "Test the installed CLI from a separate linked worktree and verify hc integration"
-run = "node scripts/smoke.ts --cli agent-container"
+run = "node scripts/smoke.ts --cli agent-sandbox"
+
+[tasks."smoke:herdr"]
+description = "Check app space/tab adoption in a new sandbox without changing selection (requires open Herdr)"
+run = "node scripts/smoke-herdr.ts"
 
 [tasks.start]
-description = "Retain a guest; add --herdr to register with host hc"
+description = "Restart a stopped sandbox (pass --name NAME)"
 run = "node scripts/sandbox.ts start"
 
 [tasks.run]
-description = "Open a disposable shell; --agent selects an agent"
-run = "node scripts/sandbox.ts"
+description = "Create a named persistent sandbox; --agent selects its initial image/program"
+run = "node scripts/sandbox.ts run"
 
 [tasks.stop]
-description = "Unregister and delete a guest (pass ac-NAME)"
+description = "Stop a sandbox and retain its filesystem (pass --name NAME)"
 run = "node scripts/sandbox.ts stop"
 
 [tasks.shell]
-description = "Open a shell in an existing guest (pass ac-NAME)"
+description = "Open another shell/agent or run --exec in a sandbox (pass --name NAME)"
 run = "node scripts/sandbox.ts shell"
 
 [tasks.attach]
-description = "Attach to an existing guest's Herdr terminal (pass ac-NAME)"
+description = "Reconnect to a guest terminal (pass --name NAME --terminal ID)"
 run = "node scripts/sandbox.ts attach"
+
+[tasks.delete]
+description = "Unregister and destroy a sandbox (pass --name NAME)"
+run = "node scripts/sandbox.ts delete"
+
+[tasks.terminals]
+description = "Discover a sandbox's terminal IDs and names (pass --name NAME)"
+run = "node scripts/sandbox.ts terminals"
 
 [tasks.status]
 description = "List guests owned by this launcher"

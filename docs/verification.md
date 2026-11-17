@@ -3,6 +3,38 @@
 Local checks use Apple silicon and Apple container 1.7.1.
 All locally built images below are Linux arm64; dated sections identify the build pipeline.
 
+## Named sandboxes and opt-in mounts (17 November 2026)
+
+The CLI and image tags are now `agent-sandbox`. The renamed four-image build,
+exact image inventories, native agent flags, and real browser page checks passed.
+Trivy reported zero vulnerabilities in all four images at this advisory snapshot.
+The pnpm audits, repository scan, and browser freshness check also passed.
+
+The current suite contains 28 unit tests. The installed CLI smoke test uses fake
+state, a linked worktree, and a separate host hc core. It verified:
+
+- Explicit commands and names, literal argv, piped input, and workload exit codes.
+- Two independent guest terminals; exiting one leaves the other running.
+- Interactive foreground attachment, detach without ending the guest terminal,
+  and reattachment by terminal name through a separate test core.
+- Guest files surviving stop/start, explicit deletion, and `--rm` on sandbox stop.
+- No host agent state or skills by default; individual and combined opt-in mounts.
+- Writable Codex, Claude, and OpenCode state directories, read-only shared skills,
+  and a guest-local Claude config copy without host writeback.
+- Guest/host hc isolation, selected-core registration, restoration after restart,
+  and teardown even when the caller selects another hc core session.
+
+The live Herdr check also passed: two guest terminals joined the same existing
+space and tab without changing the selected session. This check is repeatable
+with `mise run smoke:herdr`, requires the app to be open, and uses its own sandbox.
+App IDs are qualified by machine. Guest labels can join only spaces belonging to
+that sandbox; they cannot join a host or another sandbox's space through this
+transport. Host core-session selection is a separate supported option.
+
+No real account login, credential export, or model request was tested. The checks
+cover file mounting and process/session management, not subscription acceptance.
+The earlier sections below describe prior CLI behavior at each dated milestone.
+
 ## Native apko OS base (17 November 2026)
 
 The OS now uses `image/apko.yaml` and apko's native JSON lockfile, generated with

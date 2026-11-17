@@ -8,7 +8,7 @@ if (!["container", "docker"].includes(engine))
 const failed: string[] = [];
 const osArchive = command === "build" ? prepareBuild() : undefined;
 for (const profile of PROFILES) {
-  const image = `agent-container:${profile}`;
+  const image = `agent-sandbox:${profile}`;
   if (osArchive) {
     console.log(`\nbuild: ${image}`);
     buildImage({ engine, profile }, osArchive);
@@ -42,7 +42,7 @@ for (const profile of PROFILES) {
     ];
   } else if (command === "check") {
     binary = engine;
-    args = ["run", "--rm", image, "node", "/opt/agent-container/check.ts"];
+    args = ["run", "--rm", image, "node", "/opt/agent-sandbox/check.ts"];
   } else throw new Error("Use build|check|scan|audit|locks [container|docker]");
   console.log(`\n${command}: ${image}`);
   try {

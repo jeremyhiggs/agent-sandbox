@@ -1,5 +1,5 @@
 {
-  "name": "agent-container-opencode",
+  "name": "agent-sandbox-opencode",
   "private": true,
   "dependencies": {
     "@opencode/cli": "2.3.0"

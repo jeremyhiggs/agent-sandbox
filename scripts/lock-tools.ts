@@ -63,7 +63,7 @@ for (const [profile, dependency, variable] of [
     join(tools, "package.json"),
     JSON.stringify(
       {
-        name: `agent-container-${profile}`,
+        name: `agent-sandbox-${profile}`,
         private: true,
         dependencies: { [dependency]: version(variable) },
       },

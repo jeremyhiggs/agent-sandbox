@@ -23,31 +23,31 @@ ENV SHELL="/bin/bash" LANG="C.UTF-8" SSL_CERT_FILE="/etc/ssl/certs/ca-certificat
     BROWSER_SHA256_AMD64="${BROWSER_SHA256_AMD64}" \
     AGENT_BROWSER_ARGS="--no-sandbox,--disable-dev-shm-usage" \
     AGENT_BROWSER_EXECUTABLE_PATH="/opt/chrome/chrome"
-COPY image/install.ts image/browser.ts image/packages.ts image/artifacts.json /opt/agent-container/
-COPY image/apko.lock.json /opt/agent-container/apko.lock.json
+COPY image/install.ts image/browser.ts image/packages.ts image/artifacts.json /opt/agent-sandbox/
+COPY image/apko.lock.json /opt/agent-sandbox/apko.lock.json
 COPY image/tools/base/package.json image/tools/base/pnpm-lock.yaml /opt/tools/base/
-RUN node /opt/agent-container/install.ts && node /opt/agent-container/browser.ts
-COPY image/check.ts /opt/agent-container/
+RUN node /opt/agent-sandbox/install.ts && node /opt/agent-sandbox/browser.ts
+COPY image/check.ts /opt/agent-sandbox/
 ENTRYPOINT ["/usr/bin/tini", "--"]
 CMD ["sleep", "infinity"]
 
 FROM base AS agent
-COPY image/agent.ts /opt/agent-container/
+COPY image/agent.ts /opt/agent-sandbox/
 
 FROM agent AS codex
 ARG CODEX_VERSION
 COPY image/tools/codex/package.json image/tools/codex/pnpm-lock.yaml /opt/tools/codex/
-RUN node /opt/agent-container/agent.ts codex "${CODEX_VERSION}"
+RUN node /opt/agent-sandbox/agent.ts codex "${CODEX_VERSION}"
 ENV IMAGE_AGENT="codex"
 
 FROM agent AS opencode
 ARG OPENCODE_VERSION
 COPY image/tools/opencode/package.json image/tools/opencode/pnpm-lock.yaml /opt/tools/opencode/
-RUN node /opt/agent-container/agent.ts opencode "${OPENCODE_VERSION}"
+RUN node /opt/agent-sandbox/agent.ts opencode "${OPENCODE_VERSION}"
 ENV IMAGE_AGENT="opencode"
 
 FROM agent AS claude
 ARG CLAUDE_VERSION
 COPY image/tools/claude/package.json image/tools/claude/pnpm-lock.yaml /opt/tools/claude/
-RUN node /opt/agent-container/agent.ts claude "${CLAUDE_VERSION}"
+RUN node /opt/agent-sandbox/agent.ts claude "${CLAUDE_VERSION}"
 ENV IMAGE_AGENT="claude"

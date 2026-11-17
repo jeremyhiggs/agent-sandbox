@@ -1,5 +1,5 @@
 {
-  "name": "agent-container-claude",
+  "name": "agent-sandbox-claude",
   "private": true,
   "dependencies": {
     "@anthropic-ai/claude-code": "2.1.325"

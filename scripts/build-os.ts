@@ -36,7 +36,7 @@ export function buildOS(): string {
         "--sbom-path",
         sbom,
         "image/apko.yaml",
-        "agent-container:os",
+        "agent-sandbox:os",
         output,
       ],
       { cwd: root, stdio: "inherit" },

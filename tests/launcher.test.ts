@@ -84,7 +84,7 @@ test("agent skills remain read-only when Codex skills link to the same directory
     mkdirSync(join(root, ".codex"));
     mkdirSync(skills, { recursive: true });
     symlinkSync(skills, join(root, ".codex", "skills"));
-    assert.equal(mountPlan(work, root, "codex").get(skills), true);
+    assert.equal(mountPlan(work, root, ["codex", "skills"]).get(skills), true);
   }));
 
 test("read-only skill aliases into Codex keep a read-only overlay", () =>
@@ -96,7 +96,7 @@ test("read-only skill aliases into Codex keep a read-only overlay", () =>
     mkdirSync(target, { recursive: true });
     mkdirSync(skills, { recursive: true });
     symlinkSync(target, join(skills, "example"));
-    assert.equal(mountPlan(work, root, "codex").get(target), true);
+    assert.equal(mountPlan(work, root, ["codex", "skills"]).get(target), true);
   }));
 
 test("external writable state file links require a shared parent for atomic updates", () =>
@@ -112,7 +112,7 @@ test("external writable state file links require a shared parent for atomic upda
       writeFileSync(target, "fixture");
       symlinkSync(target, join(codex, name));
     }
-    assert.throws(() => mountPlan(work, root, "codex"), /atomic updates/);
+    assert.throws(() => mountPlan(work, root, ["codex"]), /atomic updates/);
   }));
 
 test("a symlinked Codex home is rejected before creating writable aliases", () =>
@@ -123,7 +123,7 @@ test("a symlinked Codex home is rejected before creating writable aliases", () =
     mkdirSync(target, { recursive: true });
     symlinkSync(target, join(root, ".codex"));
     assert.throws(
-      () => mountPlan(work, root, "codex"),
+      () => mountPlan(work, root, ["codex"]),
       /Codex directory.*symlink/,
     );
   }));
@@ -170,7 +170,7 @@ test("skill symlink cannot expose host home", () =>
     mkdirSync(join(root, "project"));
     symlinkSync(root, join(skills, "unsafe"));
     assert.throws(
-      () => mountPlan(join(root, "project"), root, "codex"),
+      () => mountPlan(join(root, "project"), root, ["codex", "skills"]),
       /host home/,
     );
   }));
@@ -185,7 +185,7 @@ test("unrelated dangling Codex cache symlinks do not block the mount plan", () =
       join(root, ".codex", ".tmp", "old"),
     );
     assert.deepEqual(
-      new Set(mountPlan(work, root, "codex").keys()),
+      new Set(mountPlan(work, root, ["codex"]).keys()),
       new Set([work, join(root, ".codex")]),
     );
   }));
@@ -198,9 +198,9 @@ test("dangling skill symlinks stay dangling without preventing other skill mount
     assert.deepEqual(withSymlinkTargets([skills]), [skills]);
   }));
 
-test("bare invocation selects a browser-equipped base shell without Herdr", () => {
+test("bare invocation prints help without creating a sandbox", () => {
   const parsed = parseInvocation([]);
-  assert.equal(parsed.command, "run");
+  assert.equal(parsed.command, "help");
   assert.equal(parsed.options.agent, undefined);
   assert.equal(parsed.options.herdr, false);
   assert.deepEqual(parsed.argv, ["bash"]);
@@ -208,12 +208,20 @@ test("bare invocation selects a browser-equipped base shell without Herdr", () =
 
 test("prompts require an explicit agent and remain literal", () => {
   assert.throws(
-    () => parseInvocation(["--prompt", "Fix tests"]),
+    () => parseInvocation(["run", "--name", "test", "--prompt", "Fix tests"]),
     /requires --agent/,
   );
   for (const agent of ["codex", "opencode", "claude"]) {
     const prompt = "--literal; $(not-a-shell-command)";
-    const parsed = parseInvocation(["--agent", agent, "--prompt", prompt]);
+    const parsed = parseInvocation([
+      "run",
+      "--name",
+      "test",
+      "--agent",
+      agent,
+      "--prompt",
+      prompt,
+    ]);
     assert.equal(parsed.options.agent, agent);
     assert.ok(
       parsed.argv.includes(prompt) ||
@@ -224,6 +232,9 @@ test("prompts require an explicit agent and remain literal", () => {
 
 test("--exec preserves command arguments and separates launcher flags", () => {
   const parsed = parseInvocation([
+    "run",
+    "--name",
+    "test",
     "--herdr",
     "--exec",
     "printf",
@@ -233,10 +244,16 @@ test("--exec preserves command arguments and separates launcher flags", () => {
   ]);
   assert.equal(parsed.options.herdr, true);
   assert.deepEqual(parsed.argv, ["printf", "%s", "a b", "--help"]);
-  assert.throws(() => parseInvocation(["--exec"]), /requires a command/);
+  assert.throws(
+    () => parseInvocation(["run", "--name", "test", "--exec"]),
+    /requires a command/,
+  );
   assert.throws(
     () =>
       parseInvocation([
+        "run",
+        "--name",
+        "test",
         "--agent",
         "codex",
         "--prompt",
@@ -250,10 +267,16 @@ test("--exec preserves command arguments and separates launcher flags", () => {
 
 test("management commands and help stay explicit", () => {
   assert.equal(parseInvocation(["--help"]).command, "help");
-  assert.equal(parseInvocation(["stop", "ac-test"]).name, "ac-test");
-  assert.equal(parseInvocation(["stop", "cs-legacy"]).name, "cs-legacy");
+  assert.equal(parseInvocation(["stop", "--name", "ac-test"]).name, "ac-test");
+  assert.equal(
+    parseInvocation(["stop", "--name", "cs-legacy"]).name,
+    "cs-legacy",
+  );
   assert.throws(() => parseInvocation(["exec", "echo"]), /--exec/);
-  assert.throws(() => parseInvocation(["--agent", "unknown"]), /Unknown agent/);
+  assert.throws(
+    () => parseInvocation(["run", "--name", "test", "--agent", "unknown"]),
+    /Unknown agent/,
+  );
 });
 
 test("base mount plan needs no Codex state and exposes no agent credentials", () =>
@@ -263,36 +286,167 @@ test("base mount plan needs no Codex state and exposes no agent credentials", ()
     assert.deepEqual([...mountPlan(work, root).keys()], [work]);
   }));
 
-test("guest-owned persistent homes never expand host mounts through symlinks", () =>
+test("opted-in agent state never expands host mounts through contained symlinks", () =>
   fixture((root) => {
     const work = join(root, "work");
     mkdirSync(work);
     const secret = join(root, ".ssh");
     mkdirSync(secret);
     for (const agent of ["claude", "opencode"] as const) {
-      const state = join(
-        root,
-        ".local",
-        "share",
-        "agent-container",
-        agent,
-        "home",
-      );
+      const state =
+        agent === "claude"
+          ? join(root, ".claude")
+          : join(root, ".local", "share", "opencode");
       mkdirSync(state, { recursive: true });
       symlinkSync(secret, join(state, "host-ssh"));
       assert.deepEqual(
-        new Set(mountPlan(work, root, agent).keys()),
+        new Set(mountPlan(work, root, [agent]).keys()),
         new Set([work, state]),
       );
     }
   }));
 
-test("persistent home roots cannot redirect through a symlinked ancestor", () =>
+test("agent state cannot redirect through a symlinked ancestor", () =>
   fixture((root) => {
     const work = join(root, "work");
     mkdirSync(work);
     const outside = join(root, "elsewhere");
-    mkdirSync(outside);
+    mkdirSync(join(outside, "share", "opencode"), { recursive: true });
     symlinkSync(outside, join(root, ".local"));
-    assert.throws(() => mountPlan(work, root, "claude"), /persistent home/);
+    assert.throws(
+      () => mountPlan(work, root, ["opencode"]),
+      /symlinked ancestors/,
+    );
   }));
+
+test("host state and skills are opt-in independently of agent selection", () =>
+  fixture((root) => {
+    const work = join(root, "work");
+    const codex = join(root, ".codex");
+    const claude = join(root, ".claude");
+    const config = join(root, ".config", "opencode");
+    const data = join(root, ".local", "share", "opencode");
+    const skills = join(root, ".agents", "skills");
+    for (const path of [work, codex, claude, config, data, skills])
+      mkdirSync(path, { recursive: true });
+    symlinkSync(skills, join(codex, "skills"));
+    assert.deepEqual([...mountPlan(work, root).keys()], [work]);
+    assert.deepEqual(
+      new Set(mountPlan(work, root, ["codex"]).keys()),
+      new Set([work, codex]),
+    );
+    const selected = mountPlan(work, root, [
+      "codex",
+      "claude",
+      "opencode",
+      "skills",
+    ]);
+    assert.deepEqual(
+      new Set(selected.keys()),
+      new Set([work, codex, claude, config, data, skills]),
+    );
+    assert.equal(selected.get(skills), true);
+    assert.deepEqual(
+      parseInvocation(["run", "--name", "test", "--agent", "codex"]).options
+        .mount,
+      [],
+    );
+    assert.deepEqual(
+      parseInvocation([
+        "run",
+        "--name",
+        "test",
+        "--agent",
+        "codex",
+        "--mount",
+        "claude",
+        "--mount",
+        "opencode",
+      ]).options.mount,
+      ["claude", "opencode"],
+    );
+    assert.throws(
+      () => parseInvocation(["run", "--name", "test", "--mount", "all"]),
+      /Unknown mount/,
+    );
+  }));
+
+test("named persistent lifecycle and independent terminals have explicit targets", () => {
+  assert.throws(() => parseInvocation(["run"]), /--name is required/);
+  assert.throws(
+    () => parseInvocation(["--agent", "codex"]),
+    /Choose a command/,
+  );
+  assert.throws(
+    () => parseInvocation(["shell", "feature"]),
+    /Unexpected argument/,
+  );
+  assert.throws(
+    () => parseInvocation(["attach", "--name", "feature"]),
+    /requires --terminal/,
+  );
+  assert.throws(
+    () =>
+      parseInvocation([
+        "attach",
+        "--name",
+        "feature",
+        "--terminal",
+        "elsewhere\/t1",
+      ]),
+    /--terminal must/,
+  );
+  assert.throws(
+    () => parseInvocation(["shell", "--name", "feature", "--mount", "codex"]),
+    /chosen at creation/,
+  );
+  const parsed = parseInvocation([
+    "run",
+    "--name",
+    "feature",
+    "-d",
+    "--rm",
+    "--agent",
+    "codex",
+    "--hc-session",
+    "review",
+  ]);
+  assert.equal(parsed.options.detach, true);
+  assert.equal(parsed.options.rm, true);
+  assert.equal(parsed.options.herdr, true);
+  assert.equal(parsed.options["hc-session"], "review");
+  assert.equal(
+    parseInvocation([
+      "shell",
+      "--name",
+      "feature",
+      "--herdr-space",
+      "feature/sp1",
+    ]).options["herdr-space"],
+    "feature/sp1",
+  );
+  assert.throws(
+    () =>
+      parseInvocation([
+        "run",
+        "--name",
+        "feature",
+        "--herdr-space",
+        "other/sp1",
+      ]),
+    /machine-scoped space/,
+  );
+  assert.equal(parseInvocation(["run", "--name", "feature"]).options.rm, false);
+  assert.deepEqual(
+    parseInvocation([
+      "shell",
+      "--name",
+      "feature",
+      "--exec",
+      "printf",
+      "%s",
+      "literal; $(x)",
+    ]).argv,
+    ["printf", "%s", "literal; $(x)"],
+  );
+});
