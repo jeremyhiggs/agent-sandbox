@@ -263,6 +263,43 @@ try {
     terminals.filter((t: { state: string }) => t.state === "live").length,
     2,
   );
+  const parent = JSON.parse(
+    run("hc", [
+      "run",
+      "--bg",
+      "--name",
+      "remote-parent",
+      "--no-parent",
+      "--cwd",
+      work,
+      "--",
+      "node",
+      "-e",
+      `require('node:child_process').execFileSync(${JSON.stringify(binary)},${JSON.stringify([...prefix, "shell", "--name", retained, "--detach", "--terminal", "native-child", "--exec", "bash"])},{stdio:'inherit'}); console.log('CHILD_READY'); require('node:readline').createInterface({input:process.stdin}).on('line',s=>console.log('RECEIVED '+s));`,
+    ]),
+  ).address;
+  run("hc", ["wait", parent, "--output", "CHILD_READY", "--timeout", "10"]);
+  const child = JSON.parse(
+    run("hc", ["get", `${retained}/native-child`, "--json"]),
+  );
+  assert.equal(child.parent, parent);
+  assert.equal(child.die_with_parent, false);
+  const host = JSON.parse(run("hc", ["server", "status"])).core.id;
+  run("container", [
+    "exec",
+    retained,
+    "hc",
+    "send",
+    `${host}/${parent}`,
+    "NATIVE_PARENT_REPORT_OK",
+  ]);
+  assert.match(run("hc", ["read", parent]), /NATIVE_PARENT_REPORT_OK/);
+  run("hc", ["kill", parent]);
+  run("hc", ["rm", parent]);
+  assert.equal(
+    JSON.parse(run("hc", ["get", `${retained}/native-child`, "--json"])).state,
+    "live",
+  );
   assert.equal(
     invoke(["shell", "--name", retained, "--exec", "cat"], "piped input\n"),
     "piped input\n",

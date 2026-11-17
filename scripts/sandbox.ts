@@ -27,6 +27,7 @@ export type Agent = "codex" | "opencode" | "claude";
 export const MOUNTS = ["codex", "claude", "opencode", "skills"] as const;
 export type HostMount = (typeof MOUNTS)[number];
 export const DEFAULT_DNS = process.env.CONTAINER_DNS ?? "1.1.1.1";
+export const CODEX_SQLITE_HOME = "/var/lib/agent-sandbox/codex";
 const LABEL = "dev.agent-container.managed";
 const LEGACY_LABEL = "dev.codex-sandbox.managed";
 const HERDR_LABEL = "dev.agent-container.herdr";
@@ -403,6 +404,8 @@ export function createSandbox(options: Options): string {
     "AGENT_BROWSER_SOCKET_DIR=/tmp/agent-browser",
     "--env",
     "HC_SOCKET=/tmp/agent-hc.sock",
+    "--env",
+    `CODEX_SQLITE_HOME=${CODEX_SQLITE_HOME}`,
     "--dns",
     options.dns ?? DEFAULT_DNS,
   ];
@@ -422,7 +425,15 @@ export function createSandbox(options: Options): string {
     options.image ?? `agent-sandbox:${options.agent ?? "base"}`,
   ]);
   try {
-    run(container, ["exec", name, "mkdir", "-p", guestHome, workdir]);
+    run(container, [
+      "exec",
+      name,
+      "mkdir",
+      "-p",
+      guestHome,
+      workdir,
+      CODEX_SQLITE_HOME,
+    ]);
     if (options.agent === "codex")
       run(container, ["exec", name, "mkdir", "-p", join(home, ".codex")]);
     if (checkout)
@@ -611,10 +622,16 @@ async function workload(
     terminal,
     "--cwd",
     checkout,
-    "--no-parent",
     "--outlive-parent",
   ];
-  if (labels[HERDR_LABEL] === "true") {
+  const herdr = labels[HERDR_LABEL] === "true";
+  const sameCore =
+    herdr &&
+    process.env.HC_TERMINAL_ID &&
+    JSON.parse(hostHC(labels, ["server", "status"])).core.id ===
+      JSON.parse(run("hc", ["server", "status"])).core.id;
+  if (!sameCore) args.push("--no-parent");
+  if (herdr) {
     args.push("--label", "herdr.space=" + labels[SPACE_LABEL]);
     args.push(
       "--label",
@@ -622,18 +639,23 @@ async function workload(
     );
   }
   const created = JSON.parse(
-    run("container", ["exec", name, "hc", ...args, "--", ...argv]),
+    herdr
+      ? hostHC(labels, [...args, "--on", name, "--", ...argv])
+      : run("container", ["exec", name, "hc", ...args, "--", ...argv]),
   );
+  const terminalID = herdr
+    ? created.address.slice(name.length + 1)
+    : created.address;
   console.error(
     "Terminal: " +
-      created.address +
+      terminalID +
       "; attach with: agent-sandbox attach --name " +
       name +
       " --terminal " +
-      created.address,
+      terminalID,
   );
   if (options.detach) {
-    console.log(created.address);
+    console.log(terminalID);
     return 0;
   }
   const code = await foreground("container", [
@@ -642,10 +664,10 @@ async function workload(
     name,
     "hc",
     "attach",
-    created.address,
+    terminalID,
   ]);
   const result = JSON.parse(
-    run("container", ["exec", name, "hc", "get", "--json", created.address]),
+    run("container", ["exec", name, "hc", "get", "--json", terminalID]),
   );
   return result.finished_ms !== null ? (result.exit_code ?? 1) : code;
 }
@@ -793,6 +815,10 @@ export function parseInvocation(input: string[]) {
             "--dangerously-bypass-approvals-and-sandbox",
             "-c",
             'cli_auth_credentials_store="file"',
+            "-c",
+            `sqlite_home="${CODEX_SQLITE_HOME}"`,
+            "-c",
+            "check_for_update_on_startup=false",
           ]
         : options.agent === "opencode"
           ? ["opencode", "--standalone"]

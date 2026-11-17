@@ -8,23 +8,18 @@ import {
   readdirSync,
   readFileSync,
   realpathSync,
-  rmSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { ROOT, run } from "./sandbox.ts";
+import { CODEX_SQLITE_HOME, ROOT, run } from "./sandbox.ts";
 
 const artifacts = join(ROOT, ".artifacts");
 mkdirSync(artifacts, { recursive: true });
 const root = realpathSync(mkdtempSync(join(artifacts, "codex-lifecycle-")));
-const coreHome = mkdtempSync("/tmp/as-live-");
 const coreEnv: NodeJS.ProcessEnv = {
   ...process.env,
-  HC_SESSION: "live",
-  XDG_CONFIG_HOME: join(coreHome, "config"),
-  XDG_STATE_HOME: join(coreHome, "state"),
-  XDG_DATA_HOME: join(coreHome, "data"),
+  HC_SESSION: "default",
 };
 delete coreEnv.HC_SOCKET;
 delete coreEnv.HC_TERMINAL_ID;
@@ -39,14 +34,14 @@ const skill = [
 assert.ok(skill, "An installed agent skill is required");
 const hash = createHash("sha256").update(readFileSync(skill)).digest("hex");
 const files = ["src/index.js", "test/index.test.js", "README.md"];
-const receipts = "/tmp/lifecycle-reports.jsonl";
-const inbox = "orchestrator-inbox";
+const receipts = join(root, "parent-reports.jsonl");
+let parent: string | undefined;
 const report: Record<string, unknown> = {
   sandbox: name,
   fixture: root,
+  hcSession: "default",
   passed: false,
 };
-let coreStarted = false;
 function command(
   program: string,
   args: string[],
@@ -71,14 +66,19 @@ const hc = (args: string[]) => command("hc", args, work, coreEnv);
 const guest = (args: string[]) =>
   cli(["shell", "--name", name, "--exec", ...args]);
 function reports(): string {
-  return hc([
-    "exec",
-    "--on",
-    name,
-    "node",
-    "-e",
-    `const fs=require('node:fs'); if(fs.existsSync(${JSON.stringify(receipts)})) process.stdout.write(fs.readFileSync(${JSON.stringify(receipts)},'utf8'));`,
-  ]);
+  return existsSync(receipts) ? readFileSync(receipts, "utf8") : "";
+}
+async function waitForHerdr(visible: boolean) {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const space = JSON.parse(command("herdr-app", ["ls"])).spaces.find(
+      (space: { id: string }) => space.id.startsWith(name + "/"),
+    );
+    if (Boolean(space) === visible) return space as { id: string } | undefined;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error(
+    `Sandbox ${visible ? "did not appear in" : "was not removed from"} Herdr`,
+  );
 }
 function waitFor(marker: string) {
   const deadline = Date.now() + 600_000;
@@ -90,7 +90,16 @@ function waitFor(marker: string) {
     const worker = JSON.parse(hc(["get", `${name}/worker`, "--json"]));
     const status = worker.status?.state ?? worker.state;
     console.log(`Codex: ${status}; turn ${worker.turn}`);
-    assert.equal(worker.state, "live", "Codex exited before reporting");
+    if (worker.state !== "live") {
+      report.workerExit = {
+        exitCode: worker.exit_code,
+        reason: worker.reason,
+        signal: worker.signal,
+      };
+      throw new Error(
+        `Codex exited before reporting: ${JSON.stringify(report.workerExit)}`,
+      );
+    }
     const screen = hc(["read", `${name}/worker`, "--lines", "0"]);
     if (screen.includes("Trust this folder?")) {
       assert.ok(
@@ -108,7 +117,7 @@ function waitFor(marker: string) {
     }
     const waited = spawnSync(
       "hc",
-      ["wait", `${name}/${inbox}`, "--output", marker, "--timeout", "45"],
+      ["wait", parent!, "--output", marker, "--timeout", "45"],
       { encoding: "utf8", env: coreEnv },
     );
     assert.ok([0, 124].includes(waited.status ?? -1), waited.stderr);
@@ -145,7 +154,7 @@ try {
   );
   writeFileSync(
     join(main, "AGENTS.md"),
-    "# Scope\n\nChange only src/index.js, test/index.test.js, and README.md. Add no dependencies.\nDo not start other agents, access credentials, or change unrelated state.\nDo not commit until the orchestrator explicitly requests it.\nReport progress and completion to orchestrator-inbox with hc send.\n",
+    "# Scope\n\nChange only src/index.js, test/index.test.js, and README.md. Add no dependencies.\nDo not start other agents, access credentials, or change unrelated state.\nDo not commit until the orchestrator explicitly requests it.\nReport progress and completion using hc send to the host orchestrator address in the launch prompt.\n",
   );
   command("git", ["init", "-q", "-b", "main"], main);
   for (const [key, value] of [
@@ -170,12 +179,25 @@ try {
   );
   const baseline = command("git", ["rev-parse", "HEAD"]).trim();
   writeFileSync(join(root, "host-only.txt"), "This file must not be shared.\n");
-  const config = join(coreHome, "config", "herdr-core");
-  mkdirSync(config, { recursive: true });
-  writeFileSync(join(config, "config.toml"), "notes = false\ndraft_wait = 0\n");
-  hc(["server", "start"]);
-  coreStarted = true;
-  const prompt = `This is an authorized lifecycle acceptance test in a throwaway Git worktree. No other agents or external services. Never inspect authentication files. Your orchestrator will shortly create an hc terminal named ${inbox}; wait for hc get ${inbox} to succeed if necessary. First read the shared agent skill ${skill}, then report LIFECYCLE_STARTED with hc send ${inbox}. Implement an exported formatDuration(seconds) in src/index.js. Accept nonnegative safe integers only, throwing RangeError otherwise. Format using nonzero h/m/s parts separated by spaces: 0 -> '0s', 60 -> '1m', 3661 -> '1h 1m 1s'. Add Node built-in tests for boundaries and invalid inputs and update README.md. Run node --test. Do not commit yet. When done, report LIFECYCLE_READY_FOR_COMMIT with a short result via hc send ${inbox}, then wait for further instructions. Only edit the three files named in AGENTS.md.`;
+  const collector = `const fs=require('node:fs'); const rl=require('node:readline').createInterface({input:process.stdin}); console.log('ORCHESTRATOR_READY'); rl.on('line',text=>{fs.appendFileSync(${JSON.stringify(receipts)},JSON.stringify({text})+String.fromCharCode(10));console.log('ORCHESTRATOR_RECEIVED '+text);});`;
+  parent = JSON.parse(
+    hc([
+      "run",
+      "--bg",
+      "--no-parent",
+      "--outlive-parent",
+      "--name",
+      `as-orchestrator-${process.pid}`,
+      "--",
+      "node",
+      "-e",
+      collector,
+    ]),
+  ).address;
+  coreEnv.HC_TERMINAL_ID = parent;
+  const inbox = `${JSON.parse(hc(["server", "status"])).core.id}/${parent}`;
+  report.hostParent = parent;
+  const prompt = `This is an authorized lifecycle acceptance test in a throwaway Git worktree. No other agents or external services. Never inspect authentication files. Your host orchestrator is ${inbox}; report to it with hc send using that qualified address. First read the shared agent skill ${skill}, then report LIFECYCLE_STARTED with hc send ${inbox}. Implement an exported formatDuration(seconds) in src/index.js. Accept nonnegative safe integers only, throwing RangeError otherwise. Format using nonzero h/m/s parts separated by spaces: 0 -> '0s', 60 -> '1m', 3661 -> '1h 1m 1s'. Add Node built-in tests for boundaries and invalid inputs and update README.md. Run node --test. Do not commit yet. When done, report LIFECYCLE_READY_FOR_COMMIT with a short result via hc send ${inbox}, then wait for further instructions. Only edit the three files named in AGENTS.md.`;
   console.log(`Fixture: ${root}\nLaunching ${name} with a real Codex prompt`);
   cli([
     "run",
@@ -190,26 +212,21 @@ try {
     "--mount",
     "skills",
     "--hc-session",
-    "live",
+    "default",
     "--detach",
     "--terminal",
     "worker",
     "--prompt",
     prompt,
   ]);
-  const collector = `const fs=require('node:fs'); const rl=require('node:readline').createInterface({input:process.stdin}); console.log('ORCHESTRATOR_READY'); rl.on('line',text=>{fs.appendFileSync(${JSON.stringify(receipts)},JSON.stringify({text})+String.fromCharCode(10));console.log('ORCHESTRATOR_RECEIVED '+text);});`;
-  cli([
-    "shell",
-    "--name",
-    name,
-    "--detach",
-    "--terminal",
-    inbox,
-    "--exec",
-    "node",
-    "-e",
-    collector,
-  ]);
+  assert.equal(
+    JSON.parse(hc(["get", `${name}/worker`, "--json"])).parent,
+    parent,
+  );
+  const appSpace = await waitForHerdr(true);
+  assert.ok(appSpace, "Sandbox did not appear in the Herdr app");
+  report.herdrSpace = appSpace.id;
+  console.log(`Visible in Herdr: ${appSpace.id}`);
   const auth = spawnSync(
     "container",
     [
@@ -231,6 +248,12 @@ try {
   console.log(guest(["node", "-e", preflight]).trim());
   report.skills = { bytesMatchHost: true, readonly: true };
   waitFor("LIFECYCLE_READY_FOR_COMMIT");
+  guest([
+    "node",
+    "-e",
+    `require('node:assert/strict').ok(require('node:fs').readdirSync(${JSON.stringify(CODEX_SQLITE_HOME)}).some(name=>/^state_\\d+\\.sqlite$/.test(name)));`,
+  ]);
+  report.sqliteHome = CODEX_SQLITE_HOME;
   assert.ok(reports().includes("LIFECYCLE_STARTED"));
   console.log(guest(["node", "--test"]).trim());
   const acceptance =
@@ -244,13 +267,24 @@ try {
   command("git", ["add", ...files]);
   command("privacy-gate", ["pre-commit"]);
   const expectedTree = command("git", ["write-tree"]).trim();
+  console.log(
+    guest([
+      "git",
+      "commit",
+      "-m",
+      "feat: format durations",
+      "--",
+      ...files,
+    ]).trim(),
+  );
+  const commit = command("git", ["rev-parse", "HEAD"]).trim();
   hc([
     "send",
     `${name}/worker`,
-    `Independent tests and the host privacy-gate pre-commit scan passed for staged tree ${expectedTree}. Do not change any files. Commit only src/index.js, test/index.test.js and README.md with message 'feat: format durations'. The fixture identity and unsigned test-commit configuration are already set in its Git config. Report LIFECYCLE_COMMITTED followed by the full commit SHA with hc send ${inbox}. Do not spawn agents or push.`,
+    `The host orchestrator ran the independent tests and privacy-gate pre-commit successfully for staged tree ${expectedTree}, then executed the commit inside this guest. The commit is ${commit}. Do not change files or make another commit. Verify git HEAD, the committed tree, and a clean worktree. Report LIFECYCLE_COMMITTED followed by the full commit SHA with hc send ${inbox}. Do not spawn agents or push.`,
   ]);
   waitFor("LIFECYCLE_COMMITTED");
-  const commit = command("git", ["rev-parse", "HEAD"]).trim();
+  assert.equal(command("git", ["rev-parse", "HEAD"]).trim(), commit);
   assert.notEqual(commit, baseline);
   assert.equal(
     command("git", ["rev-parse", "HEAD^{tree}"]).trim(),
@@ -261,12 +295,14 @@ try {
   const received = reports();
   assert.ok(received.includes(commit));
   report.commit = commit;
+  report.commitActor =
+    "Host orchestrator executes git commit inside the guest after the host privacy scan";
   report.agentReports = received
     .trim()
     .split("\n")
     .map((line) => JSON.parse(line));
   report.reportTransport =
-    "Guest hc send to orchestrator inbox; host reads receipt through its registered hc machine";
+    "Native hc remote child sends directly to its qualified host parent";
   cli([
     "shell",
     "--name",
@@ -301,14 +337,26 @@ try {
     ]).trim(),
   );
   cli(["stop", "--name", name]);
+  await waitForHerdr(false);
   assert.match(cli(["status"]), new RegExp(`${name}\\tstopped`));
-  assert.equal(JSON.parse(hc(["machine", "ls", "--json"])).machines.length, 0);
+  assert.ok(
+    !JSON.parse(hc(["machine", "ls", "--json"])).machines.some(
+      (machine: { name: string }) => machine.name === name,
+    ),
+  );
+  cli([
+    "start",
+    "--name",
+    name,
+    "--detach",
+    "--terminal",
+    "restarted",
+    "--exec",
+    "bash",
+  ]);
+  await waitForHerdr(true);
   assert.match(
-    cli([
-      "start",
-      "--name",
-      name,
-      "--exec",
+    guest([
       "node",
       "-e",
       "require('node:assert/strict').equal(require('node:fs').readFileSync('/tmp/lifecycle-persistent','utf8'),'retained'); console.log('Restart retained guest filesystem');",
@@ -321,7 +369,13 @@ try {
     ),
   );
   cli(["delete", "--name", name]);
-  assert.equal(JSON.parse(hc(["machine", "ls", "--json"])).machines.length, 0);
+  await waitForHerdr(false);
+  report.herdrRemovedOnStopAndDelete = true;
+  assert.ok(
+    !JSON.parse(hc(["machine", "ls", "--json"])).machines.some(
+      (machine: { name: string }) => machine.name === name,
+    ),
+  );
   report.passed = true;
   console.log(
     `Live lifecycle passed; commit ${commit}\nEvidence: ${join(root, "report.json")}`,
@@ -344,13 +398,16 @@ try {
     report.sandboxDeleted = true;
   } finally {
     try {
-      if (coreStarted) hc(["server", "stop"]);
+      if (parent) {
+        if (JSON.parse(hc(["get", parent, "--json"])).state === "live")
+          hc(["kill", parent]);
+        hc(["rm", parent]);
+      }
     } finally {
       writeFileSync(
         join(root, "report.json"),
         JSON.stringify(report, null, 2) + "\n",
       );
-      rmSync(coreHome, { recursive: true });
     }
   }
 }

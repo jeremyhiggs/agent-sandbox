@@ -190,10 +190,19 @@ hc attach feature/reviewer
 For a non-default core session, run hc with the same `HC_SESSION`. Without host
 registration, use `container exec feature hc send reviewer 'Run the tests'`.
 
+When launched from an hc terminal with `--herdr` targeting the same host core,
+managed guest terminals become its native hc children. They keep running when
+that parent exits. With another host core, or from outside hc, they have no host
+parent. Inside the guest, `hc get "$HC_TERMINAL_ID" --json` shows its parent;
+reply with `hc send <parent> 'Task complete'`. Keep the machine prefix in the
+parent address: a bare terminal ID identifies a terminal in the guest.
+
 Transport uses `hc machine add --via 'container exec -i … sh -c'`. No SSH server,
 host socket mount, or host core configuration is shared with the guest. A short
 guest-local hc socket avoids Unix socket path limits. `stop` removes host
-registration; `start` restores it. `delete` unregisters and removes the sandbox.
+registration and its Herdr space; `start` restores the registration and opens a
+new terminal in its space. `delete` unregisters and removes the sandbox and its
+Herdr space.
 Stopping it through Apple's CLI bypasses the wrapper's registration cleanup.
 
 ## Shared files and authentication
@@ -250,6 +259,15 @@ file storage:
 ```sh
 agent-sandbox shell --name codex-work --exec codex -c 'cli_auth_credentials_store="file"' login --device-auth
 ```
+
+Managed Codex launches keep SQLite runtime databases in the guest at
+`/var/lib/agent-sandbox/codex` using `sqlite_home`. They persist across stop/start
+and disappear on deletion. Login, configuration, skills, and conversation files
+remain shared when selected. This avoids host/guest database backfill and locking
+conflicts. The container also sets `CODEX_SQLITE_HOME` for custom launches;
+an explicit `sqlite_home` in your configuration takes precedence over that
+environment variable. Managed launches disable startup update checks so the
+pinned image version starts without an update dialog.
 
 Claude reads file-backed Linux credentials from `~/.claude/.credentials.json`.
 A macOS Keychain login is not exported by mounting that directory; use Claude's
@@ -316,17 +334,19 @@ opens two terminals in its existing app space/tab, checks that the selected
 session stays unchanged, and deletes the test sandbox. It uses no agent login.
 
 Run `mise run smoke:codex` for the full live Codex lifecycle. It requires an
-existing file-backed ChatGPT login, installed agent skills, host Git, hc, and
+existing file-backed ChatGPT login, installed agent skills, open Herdr, host Git, hc, and
 the host `privacy-gate` command. It mounts your normal `.codex` and read-only
 `.agents/skills`, verifies login and skill access, and sends an initial task to
 Codex in a throwaway linked worktree. The test independently checks the result,
-runs the privacy gate, asks Codex to commit, opens another shell, runs an exec
+runs the host privacy gate, commits through the guest and asks Codex to verify
+and report the commit, opens another shell, runs an exec
 command, checks stop/start persistence, and deletes the sandbox.
 
-Codex sends progress and commit reports to a guest hc orchestrator inbox; the
-host test verifies receipt through the registered machine. This does not give
-the guest access to host hc sockets or automatically link it to a host parent
-terminal. The test uses a separate host hc core and retains its fixture,
+Codex sends progress and commit reports directly to its host hc parent using
+hc's native return connection. The test verifies that parent relationship and
+receipt of the reports. It uses your default host hc core, verifies the sandbox
+appears in Herdr, and cleans up only its own machine and orchestrator terminal.
+It retains its fixture,
 commit, and `report.json` under `.artifacts/codex-lifecycle-*`. It makes real
 model requests using your subscription and is excluded from CI.
 

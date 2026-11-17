@@ -91,12 +91,18 @@ provider login or subscription acceptance.
 The separate, opt-in `smoke:codex` test uses the normal host Codex login and
 shared skills for a real model task. It checks the guest's ChatGPT login status,
 matching skill bytes and read-only access, and exclusion of an unshared host
-file. It independently tests Codex's changes, runs the host privacy gate, asks
-Codex to commit, and verifies the exact committed tree and unchanged main branch.
+file. It verifies that Codex created its runtime database in guest-local storage.
+It independently tests Codex's changes, runs the host privacy gate, commits
+through the guest, and asks Codex to verify and report the SHA. It verifies the
+exact committed tree and unchanged main branch.
 It exercises another shell, direct exec, retained guest files across stop/start,
-hc registration cleanup, and deletion. Progress and commit reports go to a guest
-hc inbox and are read by the host through its registered machine; no host parent
-relationship or reverse host socket access is implied. Its retained
+hc registration cleanup, and deletion. It uses the default host hc core and
+verifies that the sandbox appears in the Herdr app. It removes only its own
+machine and orchestrator terminal and never stops the host core. It verifies
+removal from Herdr on stop and deletion, and reappearance after restart.
+It also verifies
+the guest's native host-parent relationship and direct progress and commit
+reports over hc's existing connection, without a mounted host socket. Its retained
 `.artifacts/codex-lifecycle-*/report.json` records the outcome. This test is not
 part of CI.
 

@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
+  CODEX_SQLITE_HOME,
   createSandbox,
   mountPlan,
   parseInvocation,
@@ -310,6 +311,10 @@ test("prompts require an explicit agent and remain literal", () => {
       prompt,
     ]);
     assert.equal(parsed.options.agent, agent);
+    if (agent === "codex") {
+      assert.ok(parsed.argv.includes(`sqlite_home="${CODEX_SQLITE_HOME}"`));
+      assert.ok(parsed.argv.includes("check_for_update_on_startup=false"));
+    }
     assert.ok(
       parsed.argv.includes(prompt) ||
         parsed.argv.includes("--prompt=" + prompt),
