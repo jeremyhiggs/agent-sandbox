@@ -23,8 +23,9 @@ mise run install
 ```
 
 `mise.toml` declares the host tools, including Apple's macOS-only runtime, and
-pins image tool versions. Builds use exact OS package locks, base image digests,
-archive checksums, and frozen pnpm graphs. See [reproducibility](docs/reproducibility.md).
+pins image tool versions. Builds use apko's native OS recipe and lockfile, a pinned
+mise image digest, archive checksums, and frozen pnpm graphs. The Dockerfile
+builds on the OS filesystem assembled by apko. See [reproducibility](docs/reproducibility.md).
 
 Installation creates `~/.local/bin/agent-container`. Keep that directory on
 `PATH` and keep this repository at its installed location: the command loads its
@@ -220,8 +221,7 @@ CI builds all profiles on amd64 and arm64, checks each, and runs Trivy image
 scans. `build:ci`, `check:image:ci`, and `scan:ci` use Docker on Linux. Repository
 Trivy, pnpm audits of all dependency graphs, and Chrome freshness are separate
 audits. CI runs daily at **00:00 UTC**, plus push, pull request, and manual
-triggers. A remote is required to activate the configured workflow; this repo
-currently has none. There are no dependency update PR bots.
+triggers. The workflow becomes active when commits are pushed to the GitHub remote. There are no dependency update PR bots.
 
 HIGH/CRITICAL findings fail the security gates, including unfixed findings.
 Complete Trivy reports remain under `.artifacts/` and in CI artifacts. Scanner

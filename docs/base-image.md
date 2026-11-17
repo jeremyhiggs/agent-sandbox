@@ -37,8 +37,9 @@ or its required system libraries. See [Chainguard's libc explanation](https://ww
 
 Mise works in the Wolfi image. It installs tools through its own backends rather
 than requiring every tool to exist in APK. Image tool versions are declared in
-`mise.toml`. The image build uses checksum-locked CLI archives and frozen pnpm
-dependencies. Guest repositories can use [mise backends](https://mise.jdx.dev/dev-tools/backends/) normally.
+`mise.toml`. The image build uses a native apko recipe/lock for OS packages, checksum-locked
+CLI archives, and frozen pnpm dependencies. The Dockerfile adds the non-APK tools
+and agents above apko's OS filesystem. Guest repositories can use [mise backends](https://mise.jdx.dev/dev-tools/backends/) normally.
 
 A fresh guest also passed a repository-config probe with mise 2026.11.7:
 

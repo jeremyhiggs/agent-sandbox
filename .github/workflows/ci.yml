@@ -68,6 +68,8 @@ jobs:
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: vulnerabilities-${{ matrix.runner }}
-          path: .artifacts/vulnerabilities-*.json
+          path: |
+            .artifacts/vulnerabilities-*.json
+            .artifacts/apko/sbom/**
           include-hidden-files: true
           if-no-files-found: ignore

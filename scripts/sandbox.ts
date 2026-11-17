@@ -18,6 +18,7 @@ import { homedir, tmpdir } from "node:os";
 import { delimiter, dirname, join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
+import { buildOS } from "./build-os.ts";
 import { checkVulnerabilities } from "./vulnerabilities.ts";
 
 export const ROOT = resolve(import.meta.dirname, "..");
@@ -378,16 +379,25 @@ export function stop(name: string): void {
   }
 }
 
-function build(options: Options): void {
+export function prepareBuild(): string {
   execFileSync("node", [join(ROOT, "scripts", "check-locks.ts")], {
     stdio: "inherit",
   });
+  return buildOS();
+}
+
+export function buildImage(
+  options: Pick<Options, "engine" | "profile" | "image" | "dns">,
+  osArchive: string,
+): void {
   const engine = options.engine ?? "container";
   const variant = options.profile ?? "base";
   if (!(PROFILES as readonly string[]).includes(variant))
     throw new Error("Use --profile base|codex|opencode|claude");
   const args = [
     "build",
+    "--build-arg",
+    `OS_ARCHIVE=${osArchive}`,
     "--pull",
     "--tag",
     options.image ?? `agent-container:${variant}`,
@@ -395,7 +405,6 @@ function build(options: Options): void {
     variant,
   ];
   for (const name of [
-    "WOLFI_BASE",
     "MISE_BASE",
     "BROWSER_SHA256_ARM64",
     "BROWSER_SHA256_AMD64",
@@ -642,7 +651,8 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`);
     return;
   }
   if (command === "build") {
-    build(options);
+    const archive = prepareBuild();
+    buildImage(options, archive);
     return;
   }
   if (command === "scan") {

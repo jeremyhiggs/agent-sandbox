@@ -1,0 +1,49 @@
+contents:
+  repositories:
+    - https://packages.wolfi.dev/os
+  keyring:
+    - https://packages.wolfi.dev/os/wolfi-signing.rsa.pub
+  packages:
+    - wolfi-base
+    - apk-tools
+    - bash
+    - ca-certificates-bundle
+    - curl
+    - git
+    - gh=2.104.0-r0
+    - git-lfs
+    - jq
+    - less
+    - nodejs-24=24.22.3-r2
+    - openssh-client
+    - procps
+    - ripgrep
+    - tini
+    - unzip
+    - xz
+    - alsa-lib
+    - at-spi2-core
+    - cairo
+    - cups-libs
+    - font-liberation
+    - glib
+    - libatk-1.0
+    - libatk-bridge-2.0
+    - libdrm
+    - libx11
+    - libxcb
+    - libxcomposite
+    - libxdamage
+    - libxext
+    - libxfixes
+    - libxkbcommon
+    - libxrandr
+    - mesa-gbm
+    - libnspr
+    - libnss
+    - libudev
+    - pango
+
+archs:
+  - arm64
+  - amd64

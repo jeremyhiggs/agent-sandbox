@@ -9,6 +9,7 @@ hadolint = "2.15.1"
 trivy = "0.76.2"
 taplo = "0.10.0"
 actionlint = "1.7.12"
+apko = "1.5.1"
 container = { version = "1.7.1", os = ["macos"] }
 
 # Image dependencies are passed to Dockerfile by scripts/sandbox.ts build.
@@ -20,7 +21,6 @@ IMAGE_PNPM_VERSION = "11.28.12"
 IMAGE_BROWSER_VERSION = "157.0.8103.78"
 IMAGE_BROWSER_SHA256_ARM64 = "f354d666822a11d8fe99e923c44be77dd226fab2750c5b5947e6318818bf10f1"
 IMAGE_BROWSER_SHA256_AMD64 = "9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb"
-IMAGE_WOLFI_BASE = "cgr.dev/chainguard/wolfi-base:latest@sha256:833c48f1faf32c90e6f9501a2410a9aa28ceb2c594102edd4470053c30efa089"
 IMAGE_MISE_BASE = "ghcr.io/jdx/mise:2026.11.7@sha256:36a8408d3398aff30a761b4ae57f71f50942d64f4e7ecd5353ffaee7ec4fa63a"
 IMAGE_CODEX_VERSION = "0.167.2"
 IMAGE_OPENCODE_VERSION = "2.3.0"
@@ -137,8 +137,8 @@ run = "node scripts/security.ts repo"
 run = "node scripts/security.ts browser"
 
 [tasks."lock:update"]
-description = "Resolve complete Wolfi package locks for both architectures"
-run = "node scripts/lock-packages.ts"
+description = "Generate the native apko lockfile for both architectures"
+run = "apko lock image/apko.yaml --output image/apko.lock.json"
 
 [tasks."lock:tools"]
 description = "Refresh CLI archive checksums and the image's pnpm dependency lock"

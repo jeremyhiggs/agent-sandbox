@@ -1,13 +1,19 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { PROFILES, ROOT } from "./sandbox.ts";
+import { buildImage, PROFILES, prepareBuild, ROOT } from "./sandbox.ts";
 
 const [command, engine = "container"] = process.argv.slice(2);
 if (!["container", "docker"].includes(engine))
   throw new Error("Use container or docker");
 const failed: string[] = [];
+const osArchive = command === "build" ? prepareBuild() : undefined;
 for (const profile of PROFILES) {
   const image = `agent-container:${profile}`;
+  if (osArchive) {
+    console.log(`\nbuild: ${image}`);
+    buildImage({ engine, profile }, osArchive);
+    continue;
+  }
   let binary: string;
   let args: string[];
   if (command === "audit" || command === "locks") {
@@ -24,7 +30,7 @@ for (const profile of PROFILES) {
             "--ignore-scripts",
           ]),
     ];
-  } else if (command === "build" || command === "scan") {
+  } else if (command === "scan") {
     binary = "node";
     args = [
       join(ROOT, "scripts", "sandbox.ts"),
@@ -42,7 +48,6 @@ for (const profile of PROFILES) {
   try {
     execFileSync(binary, args, { stdio: "inherit" });
   } catch (error) {
-    if (command === "build") throw error;
     failed.push(profile);
   }
 }

@@ -1,24 +1,35 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  lockedPackages,
   parseApkDatabase,
-  parsePackagePins,
   verifyPackageInventory,
 } from "../image/packages.ts";
 
-test("package locks require exact versions and reject duplicate names", () => {
-  for (const content of [
-    "",
-    "curl",
-    "curl>=1",
-    "curl=1\ncurl=2",
-    "curl=1\ncurl=1",
-  ])
-    assert.throws(() => parsePackagePins(content), /Invalid package lock/);
-  assert.deepEqual(parsePackagePins("libgcc=16.2.0-r4\ncurl=8.17.0-r1\n"), [
-    "libgcc=16.2.0-r4",
-    "curl=8.17.0-r1",
+test("native apko lock inventories select the requested architecture", () => {
+  const lock = {
+    contents: {
+      packages: [
+        { name: "nodejs-24", version: "24.22.3-r2", architecture: "aarch64" },
+        { name: "nodejs-24", version: "24.22.3-r3", architecture: "x86_64" },
+        { name: "amd-only", version: "1-r0", architecture: "x86_64" },
+      ],
+    },
+  };
+  assert.deepEqual(lockedPackages(lock, "arm64"), ["nodejs-24=24.22.3-r2"]);
+  assert.deepEqual(lockedPackages(lock, "x64"), [
+    "amd-only=1-r0",
+    "nodejs-24=24.22.3-r3",
   ]);
+  assert.deepEqual(lockedPackages(lock, "amd64"), lockedPackages(lock, "x64"));
+  assert.throws(
+    () => lockedPackages(lock, "other"),
+    /Unsupported architecture/,
+  );
+  assert.throws(
+    () => lockedPackages({ contents: { packages: [] } }, "arm64"),
+    /no packages/,
+  );
 });
 
 test("APK inventory preserves revisions and hyphenated package names", () => {

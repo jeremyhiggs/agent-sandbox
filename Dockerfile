@@ -1,12 +1,11 @@
 # syntax=docker/dockerfile:1
-ARG WOLFI_BASE
 ARG MISE_BASE
 FROM ${MISE_BASE} AS mise
 
-FROM ${WOLFI_BASE} AS base
-ARG TARGETARCH
-COPY image/locks/wolfi/${TARGETARCH}/base.txt /tmp/packages.lock
-RUN xargs apk add --no-cache < /tmp/packages.lock && rm /tmp/packages.lock
+FROM scratch AS base
+ARG OS_ARCHIVE
+# hadolint ignore=DL3020
+ADD ${OS_ARCHIVE} /
 
 ARG PNPM_VERSION
 ARG AGENT_BROWSER_VERSION
@@ -16,7 +15,7 @@ ARG BROWSER_VERSION
 ARG BROWSER_SHA256_ARM64
 ARG BROWSER_SHA256_AMD64
 COPY --from=mise /usr/local/bin/mise /usr/local/bin/mise
-ENV SHELL="/bin/bash" LANG="C.UTF-8" \
+ENV SHELL="/bin/bash" LANG="C.UTF-8" SSL_CERT_FILE="/etc/ssl/certs/ca-certificates.crt" \
     PNPM_HOME="/opt/pnpm-home" MISE_NPM_PACKAGE_MANAGER="pnpm" \
     PATH="/opt/pnpm-home:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     BROWSER_VERSION="${BROWSER_VERSION}" \
@@ -25,7 +24,7 @@ ENV SHELL="/bin/bash" LANG="C.UTF-8" \
     AGENT_BROWSER_ARGS="--no-sandbox,--disable-dev-shm-usage" \
     AGENT_BROWSER_EXECUTABLE_PATH="/opt/chrome/chrome"
 COPY image/install.ts image/browser.ts image/packages.ts image/artifacts.json /opt/agent-container/
-COPY image/locks/ /opt/agent-container/locks/
+COPY image/apko.lock.json /opt/agent-container/apko.lock.json
 COPY image/tools/base/package.json image/tools/base/pnpm-lock.yaml /opt/tools/base/
 RUN node /opt/agent-container/install.ts && node /opt/agent-container/browser.ts
 COPY image/check.ts /opt/agent-container/

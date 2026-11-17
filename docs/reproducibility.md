@@ -1,62 +1,79 @@
 # Reproducible dependencies
 
-Normal builds use pinned dependency versions. Refresh tasks update the pins
-explicitly. Security scans use the current advisory database without updating
-the image packages.
+The OS uses apko's native recipe and lockfile. The Dockerfile adds the browser,
+standalone tools, and agent profiles. Refresh tasks change dependency versions
+explicitly; security scans use the current advisory database.
 
 ## What is locked
 
-| Input                                     | Lock source                                             | Build behavior                                     |
-| ----------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
-| Wolfi and mise base images                | Digest references in `mise.toml`                        | Pull the specified OCI content                     |
-| OS packages and transitive dependencies   | `image/locks/wolfi/ARCH/base.txt`                       | Install exact `name=version` entries               |
-| pnpm, JJ, and hc archives                 | `image/artifacts.json`                                  | Check the archive SHA-256 before extraction        |
-| Agent CLIs and agent-browser dependencies | `image/tools/PROFILE/{package.json,pnpm-lock.yaml}`     | Use pnpm with `--frozen-lockfile --ignore-scripts` |
-| Chrome                                    | Version and architecture-specific hashes in `mise.toml` | Check the pinned archive checksum                  |
-| Repository Node dependencies              | Root `pnpm-lock.yaml`                                   | Use a frozen install                               |
+| Input                                    | Lock source                                         | Build behavior                                                                      |
+| ---------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| Wolfi OS packages and their dependencies | `image/apko.yaml`, `image/apko.lock.json`           | Apko verifies the recipe and installs locked packages for the selected architecture |
+| Apko and host build tools                | `mise.toml`                                         | Use the specified tool versions                                                     |
+| Mise image                               | Digest reference in `mise.toml`                     | Copy mise from the specified OCI content                                            |
+| pnpm, JJ, and hc archives                | `image/artifacts.json`                              | Verify archive SHA-256 before extraction                                            |
+| Agent CLIs and agent-browser             | `image/tools/PROFILE/{package.json,pnpm-lock.yaml}` | Frozen pnpm install with lifecycle scripts disabled                                 |
+| Chrome                                   | Version and architecture hashes in `mise.toml`      | Verify the pinned archive checksum                                                  |
+| Repository Node dependencies             | Root `pnpm-lock.yaml`                               | Frozen installation                                                                 |
 
-The OS locks cover the shared browser-equipped Wolfi base on arm64 and amd64.
-They include packages inherited from the pinned base, not only explicit requests.
-The base has 133 arm64 packages and 134 amd64 packages, including Node and browser libraries.
+`image/apko.yaml` declares the Wolfi repositories, signing key, requested packages,
+and arm64/amd64 architectures. The generated native JSON lock records the full
+resolved package graph, versions, architectures, URLs, and checksums. It replaces
+the former plain-text inventories and custom APK solver-output parser.
 
-`mise run lock:check` checks exact pins, duplicate names, package requests, base
-digests, and agreement with tool versions in `mise.toml`. Builds run this check
-before starting. Image installation and checks compare the actual OS inventory
-with the lock. Missing, changed, and additional packages fail the image check.
+`mise run lock:check` checks the locked architectures and version agreement with
+mise, standalone archive metadata, and the frozen pnpm graphs. During each image
+build, `apko build --lockfile` also rejects a recipe that no longer matches its
+lock. It verifies packages using apko's native lock and repository verification.
 
-Packages that a repo installs afterward are outside the base image reproducibility claim.
-The base and all three agent targets use the same complete OS lock. Agent targets
-add only their own pnpm graph and executable. Builds reuse the shared base cache.
+## Dockerfile and Apple container builds
+
+`container build` accepts Dockerfiles. The build script first runs native apko
+for the build host's architecture. Apko writes an OCI layout in a private temporary directory and retains SPDX SBOMs
+under `.artifacts/apko/sbom/`. The script publishes its single OS layer as a
+digest-named gzip tar archive and passes that path to the Dockerfile's standard
+`ADD` instruction. Concurrent builds use separate work directories; archive
+publication is atomic, and different OS contents get different paths.
+
+The Dockerfile starts from `scratch`, extracts that locked OS filesystem, and
+adds mise, pnpm, Chrome, and agent layers. No Docker daemon or intermediate image
+registry is needed for Apple builds. Linux CI uses the same Dockerfile with Docker.
+Each CI architecture runs on a matching native runner.
+
+The Docker context permits only the generated OS archives and the declared image
+sources. It excludes the rest of `.artifacts/`, user state, and checkout contents.
+The final image checks compare its installed APK inventory with the native lock.
+Packages installed later by a guest repository are outside this build guarantee.
 
 ## Refresh the locks
 
-Version selection for CLI tools and base images remains in `mise.toml`. Direct
-OS package requests are in `image/packages.ts`. To refresh dependencies:
+Edit requested OS packages in `image/apko.yaml`. Node and gh version checks still
+require agreement with `mise.toml`. Then run:
 
 ```sh
+mise run fmt
 mise run lock:update
-mise run lock:tools
 mise run lock:check
 mise run check
 mise run audit
 mise run build
+mise run check:image
 mise run scan
-mise run smoke
+mise run smoke:cli
 ```
 
-`lock:update` resolves complete OS package sets in temporary Wolfi guests using
-APK's simulation mode. The guests have no host checkout or credential mounts.
-The task removes them afterward. `--arch arm64|amd64` and
-`--engine container|docker` select an architecture or runtime.
+`lock:update` runs `apko lock` for both architectures without starting temporary
+VMs or parsing APK terminal output. Normal builds consume the committed lock;
+they do not regenerate it or choose newer packages. Apko caches downloads, but
+reassembles the OS from the specified recipe and lock once per build invocation.
+A four-profile batch shares that prepared filesystem; a standalone profile build
+prepares it before building the image.
 
-`lock:tools` records archive URLs and hashes for the pinned CLI versions and
-refreshes the pnpm graph for the base and all three agents. It checks the hc archive
-against the vendor manifest before recording its hash. `lock:check` validates
-the resulting pnpm lock with a frozen install. Dependency changes remain local for review.
-
-For a Chrome update, change its version and both archive hashes in `mise.toml`.
-`audit:browser` compares the pin against Google's stable release. This audit is
-separate from installation, so a new release does not prevent an old pinned build.
+`lock:tools` refreshes archive URLs/checksums and the four pnpm dependency graphs
+for versions selected in `mise.toml`. It checks hc archives against the vendor
+manifest. For a Chrome update, change its version and both hashes in `mise.toml`.
+`audit:browser` compares the pin with Google's stable release; it does not silently
+update an older pinned build.
 
 ## Vulnerability checks
 
@@ -65,36 +82,27 @@ mise run audit
 mise run scan
 ```
 
-The local `audit` task includes:
+The audits cover the root pnpm graph, all four image-tool graphs, repository
+Trivy scanning, and Chrome freshness. Image scans cover every built profile.
+CI runs on pushes, pull requests, manual requests, and daily at **00:00 UTC**
+(`0 0 * * *`). The configured workflow becomes active when commits are pushed
+to the GitHub remote. There are no automated dependency update PRs.
 
-- `audit:node`: pnpm vulnerability audit of the root lockfile.
-- `audit:tools`: pnpm vulnerability audit of the four image-tool lockfiles.
-- `audit:repo`: Trivy scan of repository dependencies, including development packages.
-- `audit:browser`: vendor stable-version check for the Chrome pin.
-
-CI runs these audits independently and scans all four image profiles on amd64 and
-arm64. It runs on pushes, pull requests, manual requests, and daily at **00:00 UTC**.
-The cron expression is `0 0 * * *`. Hosted runs require a repository remote.
-This repository currently has none, so the schedule is configured, not active.
-
-HIGH or CRITICAL findings fail the vulnerability gates. Reports retain lower
-severity and unfixed findings. No ignore-unfixed option or vulnerability
-suppression file is used. Trivy reports remain in `.artifacts/` locally and as
-CI artifacts. Downloaded native binaries still have scanner coverage limits.
+HIGH or CRITICAL findings fail, including unfixed findings. Complete Trivy
+reports and apko SBOMs remain under `.artifacts/`; CI preserves them as artifacts.
+Downloaded native binaries and Chrome have scanner coverage limits.
 
 ## Limits
 
-This provides reproducible dependency versions, not a claim of byte-identical
-OCI images. Build timestamps and generated package-manager metadata can differ.
-The check proves the installed OS package set, while hashes lock the standalone
-archives and pnpm package contents.
+Native apko locks fix package versions and package content verification. This
+does not claim that the entire Dockerfile produces byte-identical OCI images:
+later installation metadata and build timestamps can vary. The runtime images
+continue to verify their exact installed OS inventory.
 
-Package availability is a separate requirement. Wolfi repositories
-can remove old versions. Exact pins make that a build error instead of an
-implicit upgrade. Rebuilds after package removal require a retained image,
-archive cache, mirror, or snapshot repository. See
-[Chainguard's package retention policy](https://www.chainguard.dev/docs/chainguard/containers/building-and-modifying/packages/package-model).
+A lockfile does not retain withdrawn packages. Wolfi repositories can remove old
+versions; that makes rebuilding fail rather than silently upgrade. Long-term
+rebuilds require a retained image, package cache, mirror, or snapshot repository.
+See [Chainguard's package retention policy](https://www.chainguard.dev/docs/chainguard/containers/building-and-modifying/packages/package-model).
 
-The mutable package indexes still come from the configured vendor repositories.
-Their native package managers check repository signatures and package integrity.
-For archive retention independent of those repositories, keep a controlled mirror.
+See [apko's recipe format](https://github.com/chainguard-dev/apko/blob/main/docs/apko_file.md)
+and [native lock schema](https://github.com/chainguard-dev/apko/blob/main/pkg/lock/lock.go).

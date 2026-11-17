@@ -1,34 +1,29 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { packageRequests, parsePackagePins } from "../image/packages.ts";
+import { packagePins } from "../image/packages.ts";
 
 const image = join(import.meta.dirname, "..", "image");
 for (const arch of ["arm64", "amd64"]) {
-  const pins = parsePackagePins(
-    readFileSync(join(image, "locks", "wolfi", arch, "base.txt"), "utf8"),
+  const pins = packagePins(arch);
+  assert.equal(
+    new Set(pins.map((pin) => pin.split("=", 1)[0])).size,
+    pins.length,
+    "Duplicate package in native lockfile",
   );
-  const names = new Set(pins.map((pin) => pin.split("=", 1)[0]));
-  for (const name of packageRequests)
-    assert.ok(names.has(name), `wolfi/${arch}/base omits ${name}`);
-  assert.ok(
-    pins.some((pin) =>
-      pin.startsWith(`nodejs-24=${process.env.IMAGE_NODE_VERSION}-`),
-    ),
-    "Node lock differs from mise pin",
-  );
-  assert.ok(
-    pins.some((pin) => pin.startsWith(`gh=${process.env.IMAGE_GH_VERSION}-`)),
-    "gh lock differs from mise pin",
-  );
-  console.log(`wolfi/${arch}/base: ${pins.length} exact package pins`);
+  for (const [name, tool] of [
+    ["nodejs-24", "NODE"],
+    ["gh", "GH"],
+  ])
+    assert.ok(
+      pins.some((pin) =>
+        pin.startsWith(`${name}=${process.env[`IMAGE_${tool}_VERSION`]}-`),
+      ),
+      `${name} lock differs from mise pin`,
+    );
+  console.log(`apko/${arch}: ${pins.length} exact package pins`);
 }
-
-for (const name of ["WOLFI", "MISE"])
-  assert.match(
-    process.env[`IMAGE_${name}_BASE`] ?? "",
-    /@sha256:[a-f0-9]{64}$/,
-  );
+assert.match(process.env.IMAGE_MISE_BASE ?? "", /@sha256:[a-f0-9]{64}$/);
 assert.ok(
   process.env.IMAGE_MISE_BASE?.includes(`:${process.env.IMAGE_MISE_VERSION}@`),
 );
@@ -62,5 +57,5 @@ for (const [profile, dependency, variable] of [
   });
 }
 console.log(
-  "Base digests, package requests, tool archives and mise pins agree",
+  "Native OS lock, mise image digest, tool archives and version pins agree",
 );

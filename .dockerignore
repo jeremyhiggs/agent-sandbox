@@ -4,9 +4,12 @@
 !image/
 !image/*.ts
 !image/artifacts.json
-!image/locks/
-!image/locks/**
+!image/apko.lock.json
+!image/apko.yaml
 !image/tools/
 !image/tools/*/
 !image/tools/*/package.json
 !image/tools/*/pnpm-lock.yaml
+
+!.artifacts/
+!.artifacts/os-*.tar.gz
