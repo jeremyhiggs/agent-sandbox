@@ -315,6 +315,21 @@ With Herdr already open, `mise run smoke:herdr` creates a separate test sandbox,
 opens two terminals in its existing app space/tab, checks that the selected
 session stays unchanged, and deletes the test sandbox. It uses no agent login.
 
+Run `mise run smoke:codex` for the full live Codex lifecycle. It requires an
+existing file-backed ChatGPT login, installed agent skills, host Git, hc, and
+the host `privacy-gate` command. It mounts your normal `.codex` and read-only
+`.agents/skills`, verifies login and skill access, and sends an initial task to
+Codex in a throwaway linked worktree. The test independently checks the result,
+runs the privacy gate, asks Codex to commit, opens another shell, runs an exec
+command, checks stop/start persistence, and deletes the sandbox.
+
+Codex sends progress and commit reports to a guest hc orchestrator inbox; the
+host test verifies receipt through the registered machine. This does not give
+the guest access to host hc sockets or automatically link it to a host parent
+terminal. The test uses a separate host hc core and retains its fixture,
+commit, and `report.json` under `.artifacts/codex-lifecycle-*`. It makes real
+model requests using your subscription and is excluded from CI.
+
 CI builds all profiles on amd64 and arm64, checks each, and runs Trivy image
 scans. `build:ci`, `check:image:ci`, and `scan:ci` use Docker on Linux. Repository
 Trivy, pnpm audits of all dependency graphs, and Chrome freshness are separate

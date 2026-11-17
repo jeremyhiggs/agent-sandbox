@@ -7,15 +7,16 @@ remain configured CI coverage.
 
 ## Checks
 
-| Area                    | Command                | Verified behavior                                                                                       |
-| ----------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------- |
-| Source and locks        | `mise run check`       | Formatting, lint, types, unit tests, and dependency-lock consistency                                    |
-| Image build             | `mise run build`       | Four Dockerfile targets sharing the locked apko OS and browser base                                     |
-| Image runtime           | `mise run check:image` | Exact APK inventory, tool versions, agent separation, launch flags, and a real browser page load        |
-| Image vulnerabilities   | `mise run scan`        | Trivy scans of all four images; zero findings in the captured reports                                   |
-| Repository dependencies | `mise run audit`       | Root and profile pnpm audits, repository Trivy scan, and Chrome stable-version freshness                |
-| Installed launcher      | `mise run smoke:cli`   | Persistent lifecycle, independent terminals, worktrees, opt-in mounts, and isolated host hc supervision |
-| Herdr app               | `mise run smoke:herdr` | Two guest terminals in the same existing app space/tab, with the selected session preserved             |
+| Area                    | Command                | Verified behavior                                                                                                   |
+| ----------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| Source and locks        | `mise run check`       | Formatting, lint, types, unit tests, and dependency-lock consistency                                                |
+| Image build             | `mise run build`       | Four Dockerfile targets sharing the locked apko OS and browser base                                                 |
+| Image runtime           | `mise run check:image` | Exact APK inventory, tool versions, agent separation, launch flags, and a real browser page load                    |
+| Image vulnerabilities   | `mise run scan`        | Trivy scans of all four images; zero findings in the captured reports                                               |
+| Repository dependencies | `mise run audit`       | Root and profile pnpm audits, repository Trivy scan, and Chrome stable-version freshness                            |
+| Installed launcher      | `mise run smoke:cli`   | Persistent lifecycle, independent terminals, worktrees, opt-in mounts, and isolated host hc supervision             |
+| Herdr app               | `mise run smoke:herdr` | Two guest terminals in the same existing app space/tab, with the selected session preserved                         |
+| Live Codex              | `mise run smoke:codex` | Real ChatGPT login, shared skills, initial prompt, agent reports, verified commit, shell/exec, restart and deletion |
 
 Run image checks after building the images. The installed-launcher check requires
 `mise run install`; the Herdr app check requires Herdr to be open.
@@ -83,9 +84,25 @@ registration afterward.
 Herdr app IDs are qualified by machine. Guest labels can join only spaces
 belonging to that sandbox. Host hc core-session selection is a separate option.
 
-These smoke tests exercise file sharing and process/session management with
+The CLI and Herdr app smoke tests exercise file sharing and process/session management with
 fake authentication state. They make no model requests and do not establish
 provider login or subscription acceptance.
+
+The separate, opt-in `smoke:codex` test uses the normal host Codex login and
+shared skills for a real model task. It checks the guest's ChatGPT login status,
+matching skill bytes and read-only access, and exclusion of an unshared host
+file. It independently tests Codex's changes, runs the host privacy gate, asks
+Codex to commit, and verifies the exact committed tree and unchanged main branch.
+It exercises another shell, direct exec, retained guest files across stop/start,
+hc registration cleanup, and deletion. Progress and commit reports go to a guest
+hc inbox and are read by the host through its registered machine; no host parent
+relationship or reverse host socket access is implied. Its retained
+`.artifacts/codex-lifecycle-*/report.json` records the outcome. This test is not
+part of CI.
+
+Codex emitted hook warnings inside Linux during the live run. Its model task,
+skill access, and Git commit still completed; the host privacy gate ran
+separately before the commit.
 
 ## Reports and scan coverage
 

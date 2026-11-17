@@ -84,6 +84,10 @@ run = "node scripts/smoke.ts --cli agent-sandbox"
 description = "Check app space/tab adoption in a new sandbox without changing selection (requires open Herdr)"
 run = "node scripts/smoke-herdr.ts"
 
+[tasks."smoke:codex"]
+description = "Live Codex lifecycle: subscription login, shared skills, worktree, reports, commit, shell, restart and cleanup"
+run = "node scripts/smoke-codex.ts"
+
 [tasks.start]
 description = "Restart a stopped sandbox (pass --name NAME)"
 run = "node scripts/sandbox.ts start"
