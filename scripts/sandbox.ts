@@ -741,9 +741,11 @@ export function parseInvocation(input: string[]) {
       detach: { type: "boolean", short: "d", default: false },
       rm: { type: "boolean", default: false },
       help: { type: "boolean", short: "h" },
+      skill: { type: "boolean" },
     },
   });
   if (values.help) command = "help";
+  if (values.skill) command = "skill";
   const options = values as Options;
   if (options.git === "") throw new Error("--git requires a nonempty path");
   if (!command) throw new Error("Choose a command; run agent-sandbox --help");
@@ -784,12 +786,15 @@ export function parseInvocation(input: string[]) {
       options.rm ||
       options["hc-session"] ||
       (options.herdr && !options["herdr-space"])) &&
-    !["build", "scan", "help"].includes(command)
+    !["build", "scan", "help", "skill"].includes(command)
   )
     throw new Error(
       "Image, resource, mount, --rm and Herdr settings are chosen at creation with run",
     );
-  if (options.detach && !["run", "start", "shell", "help"].includes(command))
+  if (
+    options.detach &&
+    !["run", "start", "shell", "help", "skill"].includes(command)
+  )
     throw new Error("--detach is supported by run, start and shell");
   for (const mount of options.mount ?? [])
     if (!MOUNTS.includes(mount)) throw new Error(`Unknown mount: ${mount}`);
@@ -841,6 +846,12 @@ async function main(): Promise<void> {
     name: existing,
     custom,
   } = parseInvocation(process.argv.slice(2));
+  if (command === "skill") {
+    process.stdout.write(
+      readFileSync(join(ROOT, "skills", "agent-sandbox", "SKILL.md"), "utf8"),
+    );
+    return;
+  }
   if (command === "help") {
     console.log(`Usage: agent-sandbox COMMAND [options] [--exec COMMAND ARG...]
 run --name NAME                Create a persistent sandbox and open its shell/agent
@@ -854,7 +865,8 @@ status                        List managed sandboxes, including stopped ones
 build / scan                  Build or scan images
   --agent codex|opencode|claude    Select initial image (run) and program
   --prompt TEXT                  Interactive initial prompt; requires --agent
-  -d, --detach                   Launch without attaching; sandbox stays running
+  -d, --detach                   Return immediately without attaching (opt-in)
+  --skill                        Agent guidance and recommended workflows
   --rm                           Remove when the sandbox stops; chosen with run
   --herdr                        Register with host hc and show terminals in Herdr
   --hc-session NAME              Select host core session (implies --herdr)
@@ -866,7 +878,9 @@ build / scan                  Build or scan images
 Creation: --home PATH --image TAG --dns IP --cpus N --memory 4G
 No checkout is shared by default; the guest starts in its own /workspace.
 Build/scan: --engine container|docker --profile base|codex|opencode|claude
+Foreground is the default. In Codex, use a PTY background terminal to keep the launcher visible.
 Exiting or detaching any terminal leaves its sandbox running. Bare invocation prints help.
+Agent? Run: agent-sandbox --skill
 Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`);
     return;
   }

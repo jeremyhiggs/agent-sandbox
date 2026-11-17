@@ -21,6 +21,18 @@ remain configured CI coverage.
 Run image checks after building the images. The installed-launcher check requires
 `mise run install`; the Herdr app check requires Herdr to be open.
 
+The CLI's `--skill` prints the bundled recommendations without a separate skill
+installation. A process test reads it from outside a checkout with an empty
+`PATH`, so discovery needs no container runtime or host hc. Foreground launching
+was also checked in a Codex background PTY: the launcher stayed running and
+accepted shell input while its sandbox appeared in Herdr.
+
+The installer test copies the runtime twice, moves the source directory, then
+runs the installed command from another directory. It checks bundled guidance,
+caller-directory preservation, image locks, reinstalling, and refusal to replace
+unrelated commands or directories. A fixture mise shim avoids changing host
+trust during unit tests; a local install also verifies the real mise launcher.
+
 ## Images and reproducibility
 
 The supported tags are `agent-sandbox:base`, `agent-sandbox:codex`,

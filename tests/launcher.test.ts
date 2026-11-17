@@ -17,6 +17,7 @@ import {
   createSandbox,
   mountPlan,
   parseInvocation,
+  ROOT,
   repositoryMounts,
   withSymlinkTargets,
 } from "../scripts/sandbox.ts";
@@ -251,6 +252,24 @@ test("bare invocation prints help without creating a sandbox", () => {
   assert.equal(parsed.options.herdr, false);
   assert.deepEqual(parsed.argv, ["bash"]);
 });
+
+test("--skill reads the bundled guidance outside a checkout without host tools", () =>
+  fixture((root) => {
+    assert.equal(parseInvocation(["--skill"]).command, "skill");
+    const output = execFileSync(
+      process.execPath,
+      [join(ROOT, "scripts", "sandbox.ts"), "--skill"],
+      {
+        cwd: root,
+        env: { ...process.env, PATH: "" },
+        encoding: "utf8",
+      },
+    );
+    assert.equal(
+      output,
+      readFileSync(join(ROOT, "skills", "agent-sandbox", "SKILL.md"), "utf8"),
+    );
+  }));
 
 test("--git opts into sharing the current or specified checkout", () => {
   const args = ["run", "--name", "feature"];

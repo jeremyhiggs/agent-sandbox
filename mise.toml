@@ -73,7 +73,7 @@ description = "Install the locked Node type definitions"
 run = "pnpm install --frozen-lockfile --ignore-scripts"
 
 [tasks.install]
-description = "Install agent-sandbox in ~/.local/bin (--bin-dir PATH to override)"
+description = "Copy the runtime and install ~/.local/bin/agent-sandbox (--bin-dir/--install-dir PATH to override)"
 run = "node scripts/install.ts"
 
 [tasks."smoke:cli"]
