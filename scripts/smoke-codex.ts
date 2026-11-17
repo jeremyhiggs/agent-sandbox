@@ -69,6 +69,13 @@ const guest = (args: string[]) =>
 function reports(): string {
   return existsSync(receipts) ? readFileSync(receipts, "utf8") : "";
 }
+async function waitForCollector(ready: () => boolean) {
+  for (let attempt = 0; attempt < 100; attempt++) {
+    if (ready()) return;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  throw new Error("Collector did not persist readiness or the probe receipt");
+}
 async function waitForHerdr(visible: boolean) {
   for (let attempt = 0; attempt < 50; attempt++) {
     const space = JSON.parse(command("herdr-app", ["ls"])).spaces.find(
@@ -181,7 +188,7 @@ try {
   const baseline = command("git", ["rev-parse", "HEAD"]).trim();
   writeFileSync(join(root, "host-only.txt"), "This file must not be shared.\n");
   // Raw input avoids the host terminal's canonical line-length limit on reports.
-  const collector = `const fs=require('node:fs'); process.stdin.setRawMode(true); const rl=require('node:readline').createInterface({input:process.stdin}); console.log('ORCHESTRATOR_READY'); rl.on('line',text=>{fs.appendFileSync(${JSON.stringify(receipts)},JSON.stringify({text})+String.fromCharCode(10));console.log('ORCHESTRATOR_RECEIVED '+text);});`;
+  const collector = `const fs=require('node:fs'); process.stdin.setRawMode(true); const rl=require('node:readline').createInterface({input:process.stdin}); rl.on('line',text=>{fs.appendFileSync(${JSON.stringify(receipts)},JSON.stringify({text})+String.fromCharCode(10));console.log('ORCHESTRATOR_RECEIVED '+text);}); fs.writeFileSync(${JSON.stringify(receipts)},''); console.log('ORCHESTRATOR_READY');`;
   parent = JSON.parse(
     hc([
       "run",
@@ -197,13 +204,13 @@ try {
     ]),
   ).address;
   coreEnv.HC_TERMINAL_ID = parent;
-  hc(["wait", parent!, "--output", "ORCHESTRATOR_READY", "--timeout", "10"]);
+  await waitForCollector(() => existsSync(receipts));
   const probe = "HANDOFF_TRANSPORT_PROBE " + "x".repeat(4096);
   hc(["send", parent!, probe]);
-  hc(["wait", parent!, "--output", "ORCHESTRATOR_RECEIVED", "--timeout", "10"]);
-  assert.ok(
+  await waitForCollector(() =>
     reports()
       .split("\n")
+      .slice(0, -1)
       .some((line) => line && JSON.parse(line).text === probe),
   );
   report.longReportTransport = true;

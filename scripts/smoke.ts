@@ -263,6 +263,49 @@ try {
     terminals.filter((t: { state: string }) => t.state === "live").length,
     2,
   );
+  invoke([
+    "shell",
+    "--name",
+    retained,
+    "--exec",
+    "node",
+    "-e",
+    "require('node:fs').writeFileSync('/tmp/literal executable', '#!/bin/sh\\nprintf LITERAL_EXECUTABLE_OK\\n', {mode:0o755});",
+  ]);
+  for (const [terminal, executable, succeeds] of [
+    ["literal-executable", "/tmp/literal executable", true],
+    ["literal-not-shell", "touch /tmp/literal-shell-probe", false],
+  ] as const) {
+    invoke([
+      "shell",
+      "--name",
+      retained,
+      "--detach",
+      "--terminal",
+      terminal,
+      "--exec",
+      executable,
+    ]);
+    run("hc", ["wait", `${retained}/${terminal}`, "--timeout", "10"]);
+    const result = JSON.parse(
+      run("hc", ["get", `${retained}/${terminal}`, "--json"]),
+    );
+    assert.equal(result.exit_code === 0, succeeds);
+    if (succeeds)
+      assert.match(
+        run("hc", ["read", `${retained}/${terminal}`]),
+        /LITERAL_EXECUTABLE_OK/,
+      );
+  }
+  invoke([
+    "shell",
+    "--name",
+    retained,
+    "--exec",
+    "node",
+    "-e",
+    "require('node:assert/strict').equal(require('node:fs').existsSync('/tmp/literal-shell-probe'), false);",
+  ]);
   const parent = JSON.parse(
     run("hc", [
       "run",

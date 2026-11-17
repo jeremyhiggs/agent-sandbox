@@ -245,6 +245,16 @@ test("dangling skill symlinks stay dangling without preventing other skill mount
     assert.deepEqual(withSymlinkTargets([skills]), [skills]);
   }));
 
+test("Herdr names fail before filesystem or container access when too long", () =>
+  fixture((root) => {
+    const name = "a".repeat(33);
+    assert.throws(
+      () => createSandbox({ name, herdr: true, home: join(root, "missing") }),
+      /at most 32 characters/,
+    );
+    assert.doesNotThrow(() => parseInvocation(["run", "--name", name]));
+  }));
+
 test("bare invocation prints help without creating a sandbox", () => {
   const parsed = parseInvocation([]);
   assert.equal(parsed.command, "help");

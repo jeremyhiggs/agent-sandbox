@@ -355,6 +355,9 @@ function appTarget(
 }
 
 export function createSandbox(options: Options): string {
+  const name = requireName(options.name ?? "");
+  if (options.herdr && name.length > 32)
+    throw new Error("--herdr requires a sandbox name of at most 32 characters");
   const checkout =
     options.git !== undefined ? checkoutRoot(resolve(options.git)) : undefined;
   const workdir = checkout ?? "/workspace";
@@ -370,7 +373,6 @@ export function createSandbox(options: Options): string {
       `Claude configuration must be a regular file: ${claudeConfig}`,
     );
   const container = executable("container");
-  const name = requireName(options.name ?? "");
   const labels: Labels = {
     [LABEL]: "true",
     [HERDR_LABEL]: String(options.herdr),
@@ -638,10 +640,14 @@ async function workload(
       "herdr.tab=" + (labels[TAB_LABEL] || "tb" + randomUUID().slice(0, 8)),
     );
   }
+  // hc treats one whitespace-containing argument as shell text, even after --.
+  const managedArgv = custom
+    ? ["sh", "-c", 'exec "$@"', "agent-sandbox", ...argv]
+    : argv;
   const created = JSON.parse(
     herdr
-      ? hostHC(labels, [...args, "--on", name, "--", ...argv])
-      : run("container", ["exec", name, "hc", ...args, "--", ...argv]),
+      ? hostHC(labels, [...args, "--on", name, "--", ...managedArgv])
+      : run("container", ["exec", name, "hc", ...args, "--", ...managedArgv]),
   );
   const terminalID = herdr
     ? created.address.slice(name.length + 1)

@@ -67,7 +67,11 @@ Run commands from any directory. No checkout is shared by default; the guest
 starts in its own persistent `/workspace`. Use `--git` to share the current
 checkout or linked worktree, or `--git PATH` to select one elsewhere.
 Sharing requires Git on the host; Git validates the selected metadata before startup.
-A command is required; a bare invocation prints help. Creation requires a name:
+A command is required; a bare invocation prints help. Creation requires a name.
+
+Names contain 1-50 lowercase letters, digits, hyphens, or underscores and start
+with a letter or digit. Herdr integration limits names to 32 characters;
+oversized names are rejected before guest creation.
 
 ```sh
 agent-sandbox run --name feature
