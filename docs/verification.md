@@ -7,16 +7,17 @@ remain configured CI coverage.
 
 ## Checks
 
-| Area                    | Command                | Verified behavior                                                                                                   |
-| ----------------------- | ---------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| Source and locks        | `mise run check`       | Formatting, lint, types, unit tests, and dependency-lock consistency                                                |
-| Image build             | `mise run build`       | Four Dockerfile targets sharing the locked apko OS and browser base                                                 |
-| Image runtime           | `mise run check:image` | Exact APK inventory, tool versions, agent separation, launch flags, and a real browser page load                    |
-| Image vulnerabilities   | `mise run scan`        | Trivy scans of all four images; zero findings in the captured reports                                               |
-| Repository dependencies | `mise run audit`       | Root and profile pnpm audits, repository Trivy scan, and Chrome stable-version freshness                            |
-| Installed launcher      | `mise run smoke:cli`   | Persistent lifecycle, independent terminals, worktrees, opt-in mounts, and isolated host hc supervision             |
-| Herdr app               | `mise run smoke:herdr` | Two guest terminals in the same existing app space/tab, with the selected session preserved                         |
-| Live Codex              | `mise run smoke:codex` | Real ChatGPT login, shared skills, initial prompt, agent reports, verified commit, shell/exec, restart and deletion |
+| Area                    | Command                  | Verified behavior                                                                                                   |
+| ----------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
+| Source and locks        | `mise run check`         | Formatting, lint, types, unit tests, and dependency-lock consistency                                                |
+| Image build             | `mise run build`         | Four Dockerfile targets sharing the locked apko OS and browser base                                                 |
+| Build context           | `mise run smoke:context` | Declared inputs included; retained handoffs, private files, and installed dependencies excluded                     |
+| Image runtime           | `mise run check:image`   | Exact APK inventory, tool versions, agent separation, launch flags, and a real browser page load                    |
+| Image vulnerabilities   | `mise run scan`          | Trivy scans of all four images; zero findings in the captured reports                                               |
+| Repository dependencies | `mise run audit`         | Root and profile pnpm audits, repository Trivy scan, and Chrome stable-version freshness                            |
+| Installed launcher      | `mise run smoke:cli`     | Persistent lifecycle, independent terminals, worktrees, opt-in mounts, and isolated host hc supervision             |
+| Herdr app               | `mise run smoke:herdr`   | Two guest terminals in the same existing app space/tab, with the selected session preserved                         |
+| Live Codex              | `mise run smoke:codex`   | Real ChatGPT login, shared skills, initial prompt, agent reports, verified commit, shell/exec, restart and deletion |
 
 Run image checks after building the images. The installed-launcher check requires
 `mise run install`; the Herdr app check requires Herdr to be open.
@@ -28,7 +29,8 @@ was also checked in a Codex background PTY: the launcher stayed running and
 accepted shell input while its sandbox appeared in Herdr.
 
 The installer test copies the runtime twice, moves the source directory, then
-runs the installed command from another directory. It checks bundled guidance,
+runs the installed command from another directory. It checks the installed
+version against the copied package metadata, bundled guidance,
 caller-directory preservation, image locks, reinstalling, and refusal to replace
 unrelated commands or directories. A fixture mise shim avoids changing host
 trust during unit tests; a local install also verifies the real mise launcher.

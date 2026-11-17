@@ -1,5 +1,7 @@
 # Agent sandbox
 
+Version **0.1.0**. See the [release notes](CHANGELOG.md) for scope and limitations.
+
 Run shells, Codex, OpenCode, or Claude Code in a named Linux sandbox using
 Apple's `container` runtime. All images include Wolfi Linux, mise, Node, pnpm,
 Git, Git LFS, GitHub CLI (`gh`), Jujutsu, agent-browser, Chrome for Testing, and Herdr's `hc`.
@@ -8,7 +10,14 @@ The agent images add one agent CLI each. Scripts are TypeScript executed by Node
 ## Setup
 
 Use an Apple silicon Mac supported by Apple's container runtime. Install mise,
-then run these commands in this repository:
+then clone the repository into a directory named `agent-sandbox`:
+
+```sh
+git clone https://github.com/jeremyhiggs/agent-container.git agent-sandbox
+cd agent-sandbox
+```
+
+Run these commands in the repository:
 
 ```sh
 mise trust
@@ -46,6 +55,9 @@ repository.
 Agents can read the full guidance with `agent-sandbox --skill`; `--help`
 advertises it. It includes recommended launch, sharing, supervision, and cleanup
 workflows. The guidance ships with the CLI and needs no separate skill installation.
+
+Use `agent-sandbox --version` to check the installed version. Image tool versions
+are pinned independently in `mise.toml` and the committed image locks.
 
 From another folder, use `mise -C /path/to/agent-sandbox run install`.
 
@@ -157,6 +169,12 @@ uses the ordinary Codex image. There are no browser/agent combinations to build.
 common base layers. To build just one, use
 `agent-sandbox build --profile codex`. The Dockerfile's idle command lets the
 launcher manage VM lifetime; the launcher chooses the foreground workload.
+
+The amd64 OpenCode image requires an AVX2-capable CPU. Its pinned installation
+uses the standard x64 binary; it does not select the baseline binary for older
+CPUs. This does not affect the arm64 images used by Apple silicon sandboxes.
+OpenCode's [installer](https://opencode.ai/v2/install) checks AVX2 before selecting
+its x64 package; this image has the explicit CPU requirement instead.
 
 Images contain no npm, npx, compilers, make, or development headers. Install
 repo-specific dependencies inside the guest with mise or APK. These guest disk

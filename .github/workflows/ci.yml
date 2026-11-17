@@ -21,6 +21,7 @@ jobs:
           version: 2026.11.7
       - run: mise run setup
       - run: mise run check
+      - run: mise run smoke:context:ci
 
   audit:
     strategy:

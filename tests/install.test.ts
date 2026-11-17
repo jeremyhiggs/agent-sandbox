@@ -62,6 +62,10 @@ test("installation copies a standalone runtime, upgrades its shim and protects u
       guidance,
       readFileSync(join(ROOT, "skills", "agent-sandbox", "SKILL.md"), "utf8"),
     );
+    assert.equal(
+      execFileSync(shim, ["--version"], { cwd: root, env, encoding: "utf8" }),
+      `agent-sandbox ${JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version}\n`,
+    );
     assert.ok(lstatSync(join(installation, "scripts", "sandbox.ts")).isFile());
     assert.ok(existsSync(join(installation, "image", "apko.lock.json")));
     assert.ok(!existsSync(join(installation, ".env")));

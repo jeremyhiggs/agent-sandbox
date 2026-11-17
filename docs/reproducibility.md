@@ -42,6 +42,9 @@ Each CI architecture runs on a matching native runner.
 
 The Docker context permits only the generated OS archives and the declared image
 sources. It excludes the rest of `.artifacts/`, user state, and checkout contents.
+It also excludes installed dependencies beneath `image/tools/`.
+`mise run smoke:context` verifies the exported context with Apple's builder;
+`smoke:context:ci` runs the same check with Docker in CI.
 The final image checks compare its installed APK inventory with the native lock.
 Packages installed later by a guest repository are outside this build guarantee.
 

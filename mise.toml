@@ -80,6 +80,14 @@ run = "node scripts/install.ts"
 description = "Test the installed CLI from a separate linked worktree and verify hc integration"
 run = "node scripts/smoke.ts --cli agent-sandbox"
 
+[tasks."smoke:context"]
+description = "Verify the actual build context excludes worker reports and installed dependencies"
+run = "node scripts/smoke-context.ts"
+
+[tasks."smoke:context:ci"]
+description = "Verify the build context using Docker in CI"
+run = "node scripts/smoke-context.ts docker"
+
 [tasks."smoke:herdr"]
 description = "Check app space/tab adoption in a new sandbox without changing selection (requires open Herdr)"
 run = "node scripts/smoke-herdr.ts"

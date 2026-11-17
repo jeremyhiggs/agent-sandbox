@@ -742,10 +742,12 @@ export function parseInvocation(input: string[]) {
       rm: { type: "boolean", default: false },
       help: { type: "boolean", short: "h" },
       skill: { type: "boolean" },
+      version: { type: "boolean", short: "V" },
     },
   });
   if (values.help) command = "help";
   if (values.skill) command = "skill";
+  if (values.version) command = "version";
   const options = values as Options;
   if (options.git === "") throw new Error("--git requires a nonempty path");
   if (!command) throw new Error("Choose a command; run agent-sandbox --help");
@@ -786,14 +788,14 @@ export function parseInvocation(input: string[]) {
       options.rm ||
       options["hc-session"] ||
       (options.herdr && !options["herdr-space"])) &&
-    !["build", "scan", "help", "skill"].includes(command)
+    !["build", "scan", "help", "skill", "version"].includes(command)
   )
     throw new Error(
       "Image, resource, mount, --rm and Herdr settings are chosen at creation with run",
     );
   if (
     options.detach &&
-    !["run", "start", "shell", "help", "skill"].includes(command)
+    !["run", "start", "shell", "help", "skill", "version"].includes(command)
   )
     throw new Error("--detach is supported by run, start and shell");
   for (const mount of options.mount ?? [])
@@ -846,6 +848,12 @@ async function main(): Promise<void> {
     name: existing,
     custom,
   } = parseInvocation(process.argv.slice(2));
+  if (command === "version") {
+    console.log(
+      `agent-sandbox ${JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version}`,
+    );
+    return;
+  }
   if (command === "skill") {
     process.stdout.write(
       readFileSync(join(ROOT, "skills", "agent-sandbox", "SKILL.md"), "utf8"),
@@ -867,6 +875,7 @@ build / scan                  Build or scan images
   --prompt TEXT                  Interactive initial prompt; requires --agent
   -d, --detach                   Return immediately without attaching (opt-in)
   --skill                        Agent guidance and recommended workflows
+  -V, --version                  Print the installed CLI version
   --rm                           Remove when the sandbox stops; chosen with run
   --herdr                        Register with host hc and show terminals in Herdr
   --hc-session NAME              Select host core session (implies --herdr)
