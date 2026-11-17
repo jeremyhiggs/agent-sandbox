@@ -35,6 +35,7 @@ assert.ok(skill, "An installed agent skill is required");
 const hash = createHash("sha256").update(readFileSync(skill)).digest("hex");
 const files = ["src/index.js", "test/index.test.js", "README.md"];
 const receipts = join(root, "parent-reports.jsonl");
+const handoffPath = join(root, "handoff.json");
 let parent: string | undefined;
 const report: Record<string, unknown> = {
   sandbox: name,
@@ -179,7 +180,8 @@ try {
   );
   const baseline = command("git", ["rev-parse", "HEAD"]).trim();
   writeFileSync(join(root, "host-only.txt"), "This file must not be shared.\n");
-  const collector = `const fs=require('node:fs'); const rl=require('node:readline').createInterface({input:process.stdin}); console.log('ORCHESTRATOR_READY'); rl.on('line',text=>{fs.appendFileSync(${JSON.stringify(receipts)},JSON.stringify({text})+String.fromCharCode(10));console.log('ORCHESTRATOR_RECEIVED '+text);});`;
+  // Raw input avoids the host terminal's canonical line-length limit on reports.
+  const collector = `const fs=require('node:fs'); process.stdin.setRawMode(true); const rl=require('node:readline').createInterface({input:process.stdin}); console.log('ORCHESTRATOR_READY'); rl.on('line',text=>{fs.appendFileSync(${JSON.stringify(receipts)},JSON.stringify({text})+String.fromCharCode(10));console.log('ORCHESTRATOR_RECEIVED '+text);});`;
   parent = JSON.parse(
     hc([
       "run",
@@ -195,9 +197,19 @@ try {
     ]),
   ).address;
   coreEnv.HC_TERMINAL_ID = parent;
+  hc(["wait", parent!, "--output", "ORCHESTRATOR_READY", "--timeout", "10"]);
+  const probe = "HANDOFF_TRANSPORT_PROBE " + "x".repeat(4096);
+  hc(["send", parent!, probe]);
+  hc(["wait", parent!, "--output", "ORCHESTRATOR_RECEIVED", "--timeout", "10"]);
+  assert.ok(
+    reports()
+      .split("\n")
+      .some((line) => line && JSON.parse(line).text === probe),
+  );
+  report.longReportTransport = true;
   const inbox = `${JSON.parse(hc(["server", "status"])).core.id}/${parent}`;
   report.hostParent = parent;
-  const prompt = `This is an authorized lifecycle acceptance test in a throwaway Git worktree. No other agents or external services. Never inspect authentication files. Your host orchestrator is ${inbox}; report to it with hc send using that qualified address. First read the shared agent skill ${skill}, then report LIFECYCLE_STARTED with hc send ${inbox}. Implement an exported formatDuration(seconds) in src/index.js. Accept nonnegative safe integers only, throwing RangeError otherwise. Format using nonzero h/m/s parts separated by spaces: 0 -> '0s', 60 -> '1m', 3661 -> '1h 1m 1s'. Add Node built-in tests for boundaries and invalid inputs and update README.md. Run node --test. Do not commit yet. When done, report LIFECYCLE_READY_FOR_COMMIT with a short result via hc send ${inbox}, then wait for further instructions. Only edit the three files named in AGENTS.md.`;
+  const prompt = `This is an authorized lifecycle acceptance test in a throwaway Git worktree. No other agents or external services. Never inspect authentication files. Your host orchestrator is ${inbox}; report to it with hc send using that qualified address. You are a replaceable worker: guest SQLite is not the durable record. Before teardown, the host must receive and save your final handoff with results, decisions and reasons, changed files and commit IDs, tests and results, and unfinished work. First read the shared agent skill ${skill}, then report LIFECYCLE_STARTED with hc send ${inbox}. Implement an exported formatDuration(seconds) in src/index.js. Accept nonnegative safe integers only, throwing RangeError otherwise. Format using nonzero h/m/s parts separated by spaces: 0 -> '0s', 60 -> '1m', 3661 -> '1h 1m 1s'. Add Node built-in tests for boundaries and invalid inputs and update README.md. Run node --test. Do not commit yet. When done, report LIFECYCLE_READY_FOR_COMMIT with a short result via hc send ${inbox}, then wait for further instructions. Only edit the three files named in AGENTS.md.`;
   console.log(`Fixture: ${root}\nLaunching ${name} with a real Codex prompt`);
   cli([
     "run",
@@ -281,9 +293,10 @@ try {
   hc([
     "send",
     `${name}/worker`,
-    `The host orchestrator ran the independent tests and privacy-gate pre-commit successfully for staged tree ${expectedTree}, then executed the commit inside this guest. The commit is ${commit}. Do not change files or make another commit. Verify git HEAD, the committed tree, and a clean worktree. Report LIFECYCLE_COMMITTED followed by the full commit SHA with hc send ${inbox}. Do not spawn agents or push.`,
+    `The host orchestrator ran the independent tests and privacy-gate pre-commit successfully for staged tree ${expectedTree}, then executed the commit inside this guest. The commit is ${commit}. Do not change files or make another commit. Verify git HEAD, the committed tree, and a clean worktree. Report LIFECYCLE_COMMITTED followed by the full commit SHA with hc send ${inbox}. Then send a separate message to ${inbox} starting exactly with LIFECYCLE_HANDOFF followed by a space and one compact JSON object: {"result":"brief outcome","decisions":[{"decision":"implementation choice","reason":"why"}],"files":["README.md","src/index.js","test/index.test.js"],"commit":"full SHA","tests":[{"command":"node --test","result":"passed"}],"unfinished":[]}. Supply actual results and meaningful decisions with reasons. Use one line with no Markdown fences. Wait after sending; the host will save and verify your handoff before teardown. Do not spawn agents or push.`,
   ]);
   waitFor("LIFECYCLE_COMMITTED");
+  waitFor("LIFECYCLE_HANDOFF ");
   assert.equal(command("git", ["rev-parse", "HEAD"]).trim(), commit);
   assert.notEqual(commit, baseline);
   assert.equal(
@@ -303,6 +316,46 @@ try {
     .map((line) => JSON.parse(line));
   report.reportTransport =
     "Native hc remote child sends directly to its qualified host parent";
+  const handoffMessage = report.agentReports as { text: string }[];
+  const marker = "LIFECYCLE_HANDOFF ";
+  const message = handoffMessage.findLast(({ text }) =>
+    text.startsWith(marker),
+  );
+  assert.ok(message, "Parent did not receive the final handoff");
+  const handoff = JSON.parse(message.text.slice(marker.length));
+  assert.equal(handoff.commit, commit);
+  assert.deepEqual(handoff.files.sort(), [...files].sort());
+  assert.ok(typeof handoff.result === "string" && handoff.result.trim());
+  assert.ok(Array.isArray(handoff.decisions) && handoff.decisions.length > 0);
+  for (const { decision, reason } of handoff.decisions) {
+    assert.ok(typeof decision === "string" && decision.trim());
+    assert.ok(typeof reason === "string" && reason.trim());
+  }
+  assert.ok(
+    handoff.tests.some(
+      (test: { command: string; result: string }) =>
+        test.command === "node --test" && /^passed(?::|$)/.test(test.result),
+    ),
+  );
+  assert.deepEqual(handoff.unfinished, []);
+  writeFileSync(
+    handoffPath,
+    JSON.stringify(
+      {
+        ...handoff,
+        verifiedByHost: {
+          tree: expectedTree,
+          cleanWorktree: true,
+          tests: ["node --test", "independent acceptance checks"],
+        },
+      },
+      null,
+      2,
+    ) + "\n",
+  );
+  report.handoffRecorded = true;
+  report.handoffPath = handoffPath;
+  console.log("Final handoff received, verified and saved before teardown");
   cli([
     "shell",
     "--name",
@@ -370,6 +423,9 @@ try {
   );
   cli(["delete", "--name", name]);
   await waitForHerdr(false);
+  assert.equal(JSON.parse(readFileSync(handoffPath, "utf8")).commit, commit);
+  assert.equal(command("git", ["rev-parse", "HEAD"]).trim(), commit);
+  report.handoffAndCommitSurvivedDeletion = true;
   report.herdrRemovedOnStopAndDelete = true;
   assert.ok(
     !JSON.parse(hc(["machine", "ls", "--json"])).machines.some(
@@ -393,9 +449,18 @@ try {
         (guest: { configuration: { id: string } }) =>
           guest.configuration.id === name,
       )
-    )
-      cli(["delete", "--name", name]);
-    report.sandboxDeleted = true;
+    ) {
+      if (report.handoffRecorded) {
+        cli(["delete", "--name", name]);
+        report.sandboxDeleted = true;
+      } else {
+        cli(["stop", "--name", name]);
+        report.sandboxRetained = true;
+        console.log(
+          `No verified handoff; stopped ${name} and retained it for recovery`,
+        );
+      }
+    } else report.sandboxDeleted = true;
   } finally {
     try {
       if (parent) {

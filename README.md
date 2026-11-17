@@ -281,14 +281,57 @@ file storage:
 agent-sandbox shell --name codex-work --exec codex -c 'cli_auth_credentials_store="file"' login --device-auth
 ```
 
-Managed Codex launches keep SQLite runtime databases in the guest at
+Managed Codex launches keep SQLite databases in the guest at
 `/var/lib/agent-sandbox/codex` using `sqlite_home`. They persist across stop/start
-and disappear on deletion. Login, configuration, skills, and conversation files
-remain shared when selected. This avoids host/guest database backfill and locking
-conflicts. The container also sets `CODEX_SQLITE_HOME` for custom launches;
+and disappear on deletion. These databases include goals and memory-processing
+state, as well as conversation indexes. Shared transcript files cannot restore
+all database state. With `--mount codex`, login, configuration, transcript, and
+generated memory files remain on the host. Host and guest conversation lists
+and memory processing are not fully synchronized.
+
+Several host Codex processes share one kernel's file locks and memory mappings.
+Apple containers use separate Linux kernels and expose host directories through
+VirtioFS. File access alone does not establish correct cross-kernel coordination
+for SQLite WAL and its shared-memory index. We previously encountered a database
+backfill timeout with shared host SQLite. We keep databases guest-local because
+concurrent host/guest use is unverified. This is a deliberate limitation, not a
+claim that SQLite cannot support multiple processes. Codex documents cross-host
+sharing over Linux NFS with rollback journals and verified file locks. That
+procedure does not establish support for Apple's VirtioFS mounts. See
+[SQLite WAL requirements](https://www.sqlite.org/wal.html),
+[Codex shared-home guidance](https://learn.chatgpt.com/docs/environments/network-file-systems),
+and [Apple mount types](https://github.com/apple/container/blob/main/docs/volumes.md).
+
+The container also sets `CODEX_SQLITE_HOME` for custom launches;
 an explicit `sqlite_home` in your configuration takes precedence over that
 environment variable. Managed launches disable startup update checks so the
 pinned image version starts without an update dialog.
+
+### Worker handoff
+
+Treat sandbox agents as replaceable workers. The host orchestrator owns durable
+outcomes and decisions. Sandboxes remain persistent and foreground by default;
+this workflow does not change their lifecycle defaults.
+
+Include the return address and final-report requirements in the worker's initial
+prompt. Use hc's parent route when available, or collect the foreground output.
+Require results, decisions and reasons, changed files and commit IDs, test
+commands and results, and unfinished work.
+
+Before `delete`, or before stopping a sandbox created with `--rm`:
+
+1. Verify receipt of the final report. Retain the sandbox if the report is incomplete.
+2. Verify the reported changes, commit IDs, and tests from the host.
+3. Save the verified report outside the sandbox. Record lasting decisions in project documentation or a durable task handoff.
+4. Verify that work exists in the shared checkout or an export outside the sandbox.
+
+Guest SQLite is expendable only after this handoff. A chat reply alone does not
+replace the durable record. The wrapper does not copy or merge databases,
+generate host Codex memories, or enforce this handoff in `delete`. The orchestrator
+must complete it. With no Codex mount, transcript and memory files are guest-local
+too and disappear on deletion unless exported.
+
+### Other agent state
 
 Claude reads file-backed Linux credentials from `~/.claude/.credentials.json`.
 A macOS Keychain login is not exported by mounting that directory; use Claude's
@@ -367,6 +410,10 @@ Codex sends progress and commit reports directly to its host hc parent using
 hc's native return connection. The test verifies that parent relationship and
 receipt of the reports. It uses your default host hc core, verifies the sandbox
 appears in Herdr, and cleans up only its own machine and orchestrator terminal.
+Before teardown, it receives a structured final handoff, verifies its content,
+and saves `handoff.json` outside the sandbox. It verifies that the handoff and
+commit survive deletion. If the test fails before recording the handoff, it
+stops and retains its sandbox for recovery.
 It retains its fixture,
 commit, and `report.json` under `.artifacts/codex-lifecycle-*`. It makes real
 model requests using your subscription and is excluded from CI.

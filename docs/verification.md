@@ -118,6 +118,16 @@ reports over hc's existing connection, without a mounted host socket. Its retain
 `.artifacts/codex-lifecycle-*/report.json` records the outcome. This test is not
 part of CI.
 
+The worker sends a structured final handoff with results, decisions and reasons,
+changed files, the commit ID, tests and results, and unfinished work. The host
+collector uses raw terminal input and first checks a report larger than 4 KiB
+to detect terminal input truncation. The host
+verifies the handoff against the tested worktree and saves `handoff.json` before
+teardown. The test checks that the handoff and shared commit survive deletion.
+It does not depend on the guest SQLite database for continuity. If the test fails
+before it records a verified handoff, it stops and retains the sandbox for recovery.
+Inspect the retained fixture and sandbox before manual deletion.
+
 Codex emitted hook warnings inside Linux during the live run. Its model task,
 skill access, and Git commit still completed; the host privacy gate ran
 separately before the commit.

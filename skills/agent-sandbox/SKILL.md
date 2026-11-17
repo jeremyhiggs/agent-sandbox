@@ -62,9 +62,11 @@ sandbox without mounting their host state.
 Foreground `--exec` uses ordinary stdin/stdout without creating an hc terminal.
 
 Managed Codex uses file-backed auth and bypasses its inner sandbox/approvals;
-the VM and selected mounts define the host-file boundary. Its SQLite runtime
-databases stay guest-local while selected login, config, and session files are
-shared. Host Git identity, signing agents, SSH keys, and hc sockets are not mounted.
+the VM and selected mounts define the host-file boundary. Its SQLite databases
+stay guest-local, including goals and memory-processing state. Deletion loses
+that state. Selected login, config, transcript, and memory files remain shared;
+they do not provide a unified host/guest database. Host Git identity, signing
+agents, SSH keys, and hc sockets are not mounted.
 
 ## Progress and lifecycle
 
@@ -74,6 +76,21 @@ With Herdr integration, use `hc read feature/ID` and `hc send feature/ID 'task'`
 Managed terminals launched by an hc caller in the same host core inherit its
 parent route. Inside the guest, `hc get "$HC_TERMINAL_ID" --json` shows the
 parent; replies need its full machine-qualified address.
+
+Treat sandbox agents as replaceable workers. The host orchestrator owns durable
+continuity. Include the return address and handoff requirements in the initial
+prompt. Require a final report with results, decisions and reasons, changed
+files and commit IDs, test commands and results, and unfinished work.
+
+Before deletion, verify receipt through hc or the foreground terminal. Verify
+the reported files, commits, and tests independently. Save the verified handoff
+outside the sandbox; record lasting decisions in project documentation or a
+durable task handoff. A chat reply alone is not the durable record. Keep work
+in the shared checkout, or export guest-local work before deletion. If the
+report is missing or incomplete, retain the sandbox for recovery. This also
+applies before stopping a sandbox created with `--rm`. Do not rely on guest
+SQLite, automatic Codex memory generation, or synchronized conversation lists
+to preserve the outcome.
 
 Exiting an agent, shell, or launcher attachment leaves the VM running. Codex's
 background terminal shows the launcher/workload lifetime; `agent-sandbox status`
