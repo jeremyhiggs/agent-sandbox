@@ -53,8 +53,11 @@ worktree, and scratch hc configuration in a separate core session. It verifies:
 
 - Explicit commands and names, literal arguments, piped input, and workload exit
   codes, including a nonzero exit.
-- Preservation of the caller's working directory and shared worktree file/index
-  writes.
+- Guest-local `/workspace` by default, with no host checkout or worktree shared.
+- Current-worktree file/index writes with `--git`, and explicit checkout
+  selection with `--git PATH`.
+- Visible Git metadata and staging in selected normal checkouts and linked
+  worktrees, including their required external Git stores.
 - Multiple independent guest terminals; exiting one leaves the others and the
   sandbox running.
 - Foreground attachment, detach without ending the guest terminal, and

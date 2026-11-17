@@ -13,7 +13,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import { ROOT, run } from "./sandbox.ts";
+import { quote, ROOT, run } from "./sandbox.ts";
 
 const { values } = parseArgs({ options: { cli: { type: "string" } } });
 const root = realpathSync(mkdtempSync(join(tmpdir(), "agent-smoke-")));
@@ -60,6 +60,7 @@ try {
   writeFileSync(join(home, ".claude.json"), '{"smoke":true}\n');
   run("git", ["init", "-q", main]);
   run("git", ["-C", main, "worktree", "add", "--orphan", "-qb", "smoke", work]);
+  const gitPointer = readFileSync(join(work, ".git"), "utf8");
   // Ordinary execution must never call hc, even with an unusable hc on PATH.
   const fakeBin = join(root, "bin");
   mkdirSync(fakeBin);
@@ -71,11 +72,25 @@ try {
     launch(
       "shell",
       ["--exec", "bash"],
-      "printf 'base-shell-ready\\n'\ncommand -v google-chrome\nexit\n",
+      `set -e\ntest "$PWD" = /workspace\ntest ! -e ${quote(work)}\ntest ! -e ${quote(main)}\nprintf 'base-shell-ready\\n'\ncommand -v google-chrome\nif git rev-parse --git-dir; then exit 1; fi\nexit\n`,
     ),
     /base-shell-ready/,
   );
+  assert.equal(readFileSync(join(work, ".git"), "utf8"), gitPointer);
   destroy(guestName("shell"));
+  launch("git-directory-visible", [
+    "--git",
+    main,
+    "--exec",
+    "node",
+    "-e",
+    `const fs=require('node:fs'),assert=require('node:assert/strict'); assert.ok(fs.existsSync(${JSON.stringify(join(main, ".git", "HEAD"))})); fs.writeFileSync('normal-git.txt','normal checkout'); require('node:child_process').execFileSync('git',['add','normal-git.txt']);`,
+  ]);
+  assert.match(
+    run("git", ["-C", main, "status", "--porcelain"]),
+    /A  normal-git.txt/,
+  );
+  destroy(guestName("git-directory-visible"));
   const probe = `
     const fs = require('node:fs'), assert = require('node:assert/strict');
     assert.equal(process.cwd(), ${JSON.stringify(work)});
@@ -88,6 +103,7 @@ try {
   `;
   assert.match(
     launch("literal", [
+      "--git",
       "--mount",
       "skills",
       "--exec",
@@ -395,7 +411,7 @@ try {
   );
   assert.ok(existsSync(sentinel));
   console.log(
-    "Persistent lifecycle, independent terminals, literal argv, pipes, agent state, worktree, opt-in mounts and isolated Herdr supervision passed",
+    "Persistent lifecycle, independent terminals, literal argv, pipes, agent state, opt-in Git/worktree metadata and isolated Herdr supervision passed",
   );
 } finally {
   try {

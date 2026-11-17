@@ -17,7 +17,7 @@ const { values } = parseArgs({
 });
 const destination = join(resolve(values["bin-dir"]!), "agent-sandbox");
 // Mise selects this repo's pinned environment; the inner shell restores the
-// caller's directory so an omitted --checkout selects their current worktree.
+// caller's directory so --git without a path selects their current worktree.
 function launcherAt(root: string, command: string): string {
   return `#!/bin/sh
 exec mise -C ${quote(root)} exec -- sh -c ${quote('cd "$1" || exit\nshift\nexec node "$@"')} ${command} "$PWD" ${quote(join(root, "scripts", "sandbox.ts"))} "$@"

@@ -27,13 +27,6 @@ function fixture(fn: (root: string) => void) {
   }
 }
 
-function jjStore(path: string) {
-  for (const dir of ["store", "op_store", "op_heads"])
-    mkdirSync(join(path, dir), { recursive: true });
-  writeFileSync(join(path, "store", "type"), "git");
-  writeFileSync(join(path, "op_store", "type"), "simple");
-}
-
 test("linked worktree mounts checkout and common Git directory without main checkout", () =>
   fixture((root) => {
     const main = join(root, "main"),
@@ -53,27 +46,21 @@ test("linked worktree mounts checkout and common Git directory without main chec
       new Set(repositoryMounts(work)),
       new Set([work, join(main, ".git")]),
     );
+    assert.deepEqual([...mountPlan(undefined, root).keys()], []);
+    assert.deepEqual(
+      new Set(mountPlan(work, root).keys()),
+      new Set([work, join(main, ".git")]),
+    );
   }));
 
-test("arbitrary host directories cannot masquerade as shared JJ metadata", () =>
+test("Git sharing does not resolve .jj links into additional host mounts", () =>
   fixture((root) => {
     const work = join(root, "work"),
       unrelated = join(root, "private");
     mkdirSync(join(work, ".jj"), { recursive: true });
     mkdirSync(unrelated);
     symlinkSync(unrelated, join(work, ".jj", "repo"));
-    assert.throws(() => repositoryMounts(work), /JJ repository/);
-  }));
-
-test("JJ backing Git pointer must name a Git metadata directory", () =>
-  fixture((root) => {
-    const work = join(root, "work"),
-      repo = join(work, ".jj", "repo"),
-      unrelated = join(root, "private");
-    jjStore(repo);
-    mkdirSync(unrelated);
-    writeFileSync(join(repo, "store", "git_target"), unrelated);
-    assert.throws(() => repositoryMounts(work), /Git metadata/);
+    assert.deepEqual([...mountPlan(work, root).keys()], [work]);
   }));
 
 test("agent skills remain read-only when Codex skills link to the same directory", () =>
@@ -139,16 +126,6 @@ test("chained skill symlinks fail clearly before VM creation", () =>
     assert.throws(() => withSymlinkTargets([skills]), /chained symlink/);
   }));
 
-test("JJ shared repository symlink is mounted without host parent", () =>
-  fixture((root) => {
-    const work = join(root, "work"),
-      shared = join(root, "shared");
-    mkdirSync(join(work, ".jj"), { recursive: true });
-    jjStore(shared);
-    symlinkSync(shared, join(work, ".jj", "repo"));
-    assert.deepEqual(new Set(repositoryMounts(work)), new Set([work, shared]));
-  }));
-
 test("skill symlink targets are explicit mounts", () =>
   fixture((root) => {
     const skills = join(root, "skills"),
@@ -204,6 +181,48 @@ test("bare invocation prints help without creating a sandbox", () => {
   assert.equal(parsed.options.agent, undefined);
   assert.equal(parsed.options.herdr, false);
   assert.deepEqual(parsed.argv, ["bash"]);
+});
+
+test("--git opts into sharing the current or specified checkout", () => {
+  const args = ["run", "--name", "feature"];
+  assert.equal(parseInvocation(args).options.git, undefined);
+  assert.deepEqual(parseInvocation(args).options.mount, []);
+  assert.equal(parseInvocation([...args, "--git"]).options.git, ".");
+  assert.equal(
+    parseInvocation([...args, "--git", "/a worktree"]).options.git,
+    "/a worktree",
+  );
+  assert.equal(
+    parseInvocation([...args, "--git=../work"]).options.git,
+    "../work",
+  );
+  assert.equal(
+    parseInvocation([...args, "--git", "--mount", "skills"]).options.git,
+    ".",
+  );
+  const custom = parseInvocation([
+    ...args,
+    "--git",
+    "--exec",
+    "echo",
+    "--git",
+    "literal",
+  ]);
+  assert.equal(custom.options.git, ".");
+  assert.deepEqual(custom.argv, ["echo", "--git", "literal"]);
+  assert.throws(
+    () => parseInvocation([...args, "--checkout", "."]),
+    /Unknown option/,
+  );
+  assert.throws(
+    () => parseInvocation([...args, "--mount", "git"]),
+    /Unknown mount/,
+  );
+  assert.throws(() => parseInvocation([...args, "--git="]), /nonempty path/);
+  assert.throws(
+    () => parseInvocation(["shell", "--name", "feature", "--git"]),
+    /chosen at creation/,
+  );
 });
 
 test("prompts require an explicit agent and remain literal", () => {
@@ -279,10 +298,11 @@ test("management commands and help stay explicit", () => {
   );
 });
 
-test("base mount plan needs no Codex state and exposes no agent credentials", () =>
+test("base mount plan exposes no host checkout or agent credentials", () =>
   fixture((root) => {
     const work = join(root, "work");
     mkdirSync(work);
+    assert.deepEqual([...mountPlan(undefined, root).keys()], []);
     assert.deepEqual([...mountPlan(work, root).keys()], [work]);
   }));
 
@@ -330,6 +350,10 @@ test("host state and skills are opt-in independently of agent selection", () =>
     for (const path of [work, codex, claude, config, data, skills])
       mkdirSync(path, { recursive: true });
     symlinkSync(skills, join(codex, "skills"));
+    assert.deepEqual(
+      [...mountPlan(undefined, root, ["codex"]).keys()],
+      [codex],
+    );
     assert.deepEqual([...mountPlan(work, root).keys()], [work]);
     assert.deepEqual(
       new Set(mountPlan(work, root, ["codex"]).keys()),

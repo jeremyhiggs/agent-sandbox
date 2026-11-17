@@ -52,7 +52,7 @@ try {
     "run",
     "--name",
     name,
-    "--checkout",
+    "--git",
     work,
     "--home",
     home,

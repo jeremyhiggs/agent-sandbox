@@ -71,18 +71,6 @@ function gitMetadata(path: string): string {
   return canonical;
 }
 
-function jjRepository(path: string): string {
-  const canonical = realpathSync(path);
-  if (
-    !file(join(canonical, "store", "type")) ||
-    !file(join(canonical, "op_store", "type")) ||
-    !directory(join(canonical, "op_heads"))
-  ) {
-    throw new Error(`Invalid JJ repository directory: ${path}`);
-  }
-  return canonical;
-}
-
 export function repositoryMounts(checkout: string): string[] {
   const mounts = new Set([realpathSync(checkout)]);
   let git = join(checkout, ".git");
@@ -103,16 +91,6 @@ export function repositoryMounts(checkout: string): string[] {
       ),
     );
   }
-  let jj = join(checkout, ".jj", "repo");
-  if (file(jj)) {
-    jj = jjRepository(pointer(jj));
-    mounts.add(jj);
-  } else if (existsSync(jj) && lstatSync(jj).isSymbolicLink()) {
-    jj = jjRepository(jj);
-    mounts.add(jj);
-  }
-  const target = join(jj, "store", "git_target");
-  if (file(target)) mounts.add(gitMetadata(pointer(target)));
   return [...mounts].sort();
 }
 
@@ -149,12 +127,12 @@ export function withSymlinkTargets(paths: string[], home?: string): string[] {
 }
 
 export function mountPlan(
-  checkout: string,
+  checkout: string | undefined,
   home: string,
   selected: readonly HostMount[] = [],
 ): Map<string, boolean> {
   const mounts = new Map(
-    repositoryMounts(checkout).map((path) => [path, false]),
+    (checkout ? repositoryMounts(checkout) : []).map((path) => [path, false]),
   );
   if (selected.includes("codex")) {
     const codex = join(home, ".codex");
@@ -168,7 +146,11 @@ export function mountPlan(
       const path = join(codex, name);
       if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
         const target = directSymlinkTarget(path);
-        if (![checkout, codex].some((root) => inside(target, root))) {
+        if (
+          ![codex, ...(checkout ? [checkout] : [])].some((root) =>
+            inside(target, root),
+          )
+        ) {
           throw new Error(
             `${name} requires a shared directory for atomic updates; its symlink target is outside the checkout and Codex directory`,
           );
@@ -228,11 +210,9 @@ export function mountPlan(
 export function checkoutRoot(path: string): string {
   let current = realpathSync(path);
   while (true) {
-    if (existsSync(join(current, ".git")) || existsSync(join(current, ".jj")))
-      return current;
+    if (existsSync(join(current, ".git"))) return current;
     const parent = dirname(current);
-    if (parent === current)
-      throw new Error(`No Git or JJ checkout found at ${path}`);
+    if (parent === current) throw new Error(`No Git checkout found at ${path}`);
     current = parent;
   }
 }
@@ -257,7 +237,7 @@ function requireName(name: string): string {
   return name;
 }
 export type Options = {
-  checkout?: string;
+  git?: string;
   home?: string;
   name?: string;
   image?: string;
@@ -356,9 +336,11 @@ function appTarget(
 
 export function createSandbox(options: Options): {
   name: string;
-  checkout: string;
+  checkout?: string;
 } {
-  const checkout = checkoutRoot(resolve(options.checkout ?? process.cwd()));
+  const checkout =
+    options.git !== undefined ? checkoutRoot(resolve(options.git)) : undefined;
+  const workdir = checkout ?? "/workspace";
   const home = realpathSync(options.home ?? homedir());
   const mounts = mountPlan(checkout, home, options.mount);
   const claudeConfig = join(home, ".claude.json");
@@ -375,7 +357,7 @@ export function createSandbox(options: Options): {
   const labels: Labels = {
     [LABEL]: "true",
     [HERDR_LABEL]: String(options.herdr),
-    [CHECKOUT_LABEL]: checkout,
+    [CHECKOUT_LABEL]: workdir,
     [CORE_LABEL]: options["hc-session"] ?? process.env.HC_SESSION ?? "default",
     [CORE_SOCKET_LABEL]: options["hc-session"]
       ? ""
@@ -398,7 +380,7 @@ export function createSandbox(options: Options): {
     "--memory",
     options.memory ?? "4G",
     "--workdir",
-    checkout,
+    checkout ?? "/",
     "--env",
     `HOME=${guestHome}`,
     "--env",
@@ -424,19 +406,20 @@ export function createSandbox(options: Options): {
     options.image ?? `agent-sandbox:${options.agent ?? "base"}`,
   ]);
   try {
-    run(container, ["exec", name, "mkdir", "-p", guestHome]);
+    run(container, ["exec", name, "mkdir", "-p", guestHome, workdir]);
     if (options.agent === "codex")
       run(container, ["exec", name, "mkdir", "-p", join(home, ".codex")]);
-    run(container, [
-      "exec",
-      name,
-      "git",
-      "config",
-      "--global",
-      "--add",
-      "safe.directory",
-      checkout,
-    ]);
+    if (checkout)
+      run(container, [
+        "exec",
+        name,
+        "git",
+        "config",
+        "--global",
+        "--add",
+        "safe.directory",
+        checkout,
+      ]);
     // Claude atomically replaces this home-level file. Copy its initial config
     // instead of mounting a single file or exposing the host's entire home.
     if (options.mount?.includes("claude") && file(claudeConfig))
@@ -684,13 +667,18 @@ export function parseInvocation(input: string[]) {
       if (args[index + 1] === undefined)
         throw new Error("--prompt requires text");
       flags.push(`--prompt=${args[++index]}`);
+    } else if (args[index] === "--git") {
+      const path = args[index + 1];
+      flags.push(
+        `--git=${path && !path.startsWith("-") ? args[++index] : "."}`,
+      );
     } else flags.push(args[index]);
   }
   args = flags;
   const names = [
     "engine",
     "image",
-    "checkout",
+    "git",
     "home",
     "name",
     "cpus",
@@ -719,6 +707,7 @@ export function parseInvocation(input: string[]) {
   });
   if (values.help) command = "help";
   const options = values as Options;
+  if (options.git === "") throw new Error("--git requires a nonempty path");
   if (!command) throw new Error("Choose a command; run agent-sandbox --help");
   if (
     ["run", "start", "stop", "delete", "shell", "attach", "terminals"].includes(
@@ -750,7 +739,7 @@ export function parseInvocation(input: string[]) {
     command !== "run" &&
     (options.mount?.length ||
       options.home ||
-      options.checkout ||
+      options.git !== undefined ||
       options.image ||
       options.cpus ||
       options.memory ||
@@ -830,8 +819,10 @@ build / scan                  Build or scan images
   --herdr-space ID [--herdr-tab ID]   With shell: select a space/tab belonging to this sandbox
   --terminal ID_OR_NAME           Name a new terminal or select one to attach
   --exec COMMAND ARG...          Literal custom command; consumes remaining arguments
+  --git [PATH]                   Share a checkout/worktree, including Git metadata (default: current)
   --mount codex|claude|opencode|skills  Share host state (repeatable; none by default)
-Creation: --checkout PATH --home PATH --image TAG --dns IP --cpus N --memory 4G
+Creation: --home PATH --image TAG --dns IP --cpus N --memory 4G
+No checkout is shared by default; the guest starts in its own /workspace.
 Build/scan: --engine container|docker --profile base|codex|opencode|claude
 Exiting or detaching any terminal leaves its sandbox running. Bare invocation prints help.
 Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`);

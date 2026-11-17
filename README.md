@@ -39,14 +39,16 @@ From another folder, use `mise -C /path/to/agent-sandbox run install`.
 
 ## Create and use a sandbox
 
-Run commands from an existing Git checkout, linked worktree, or JJ workspace.
+Run commands from any directory. No checkout is shared by default; the guest
+starts in its own persistent `/workspace`. Use `--git` to share the current
+checkout or linked worktree, or `--git PATH` to select one elsewhere.
 A command is required; a bare invocation prints help. Creation requires a name:
 
 ```sh
 agent-sandbox run --name feature
-agent-sandbox run --name codex-work --agent codex --mount codex --mount skills
-agent-sandbox run --name reviewer --agent opencode --prompt 'Review this checkout'
-agent-sandbox run --name tests --exec pnpm test
+agent-sandbox run --name codex-work --agent codex --git --mount codex --mount skills
+agent-sandbox run --name reviewer --git /path/to/worktree --agent opencode --prompt 'Review this checkout'
+agent-sandbox run --name tests --git --exec pnpm test
 agent-sandbox run --name worker --agent claude --detach
 ```
 
@@ -85,7 +87,7 @@ agent-sandbox shell --name tests --exec sh -lc 'mise trust && mise install && mi
 ```
 
 The default guest has four CPUs and 4 GB of memory. At creation, use
-`--checkout PATH`, `--cpus 6`, `--memory 8G`, or `--image TAG` as needed.
+`--git [PATH]`, `--cpus 6`, `--memory 8G`, or `--image TAG` as needed.
 `--home PATH` selects the host state/skills source; its entire contents are not
 mounted. Mounts, image, resources, and Herdr integration are fixed at creation.
 Apple builds and guests default to DNS resolver `1.1.1.1`; `--dns IP` or
@@ -197,7 +199,7 @@ Stopping it through Apple's CLI bypasses the wrapper's registration cleanup.
 
 | Host content                                                               | Access                                      | Opt-in                         |
 | -------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------ |
-| Checkout and linked Git/JJ metadata                                        | Read/write, same paths                      | Always                         |
+| Selected checkout/worktree and its required Git metadata                   | Read/write, same paths                      | `--git [PATH]`                 |
 | `~/.codex`                                                                 | Read/write, same path                       | `--mount codex`                |
 | `~/.claude`                                                                | Read/write, same path                       | `--mount claude`               |
 | `~/.claude.json`                                                           | Initial guest-local copy; no writeback      | `--mount claude`, when present |
@@ -211,7 +213,8 @@ share Claude state in preparation for installing Claude inside the guest:
 agent-sandbox run --name ac-feature --agent codex --detach --mount codex --mount claude --mount opencode --mount skills
 ```
 
-No agent state or shared skills are mounted by default. Requested profiles must
+No checkout, worktree, Git metadata, agent state, or shared skills are mounted
+by default. Requested state profiles must
 have an existing directory under the selected `--home`. Each mounted directory
 is printed before creation. State mounts are writable, including refreshed
 credentials, settings, history, and the OpenCode database. Claude's home-level
@@ -221,13 +224,19 @@ Existing guest ownership labels are retained across the command rename.
 Previous private Linux homes under `~/.local/share/agent-container` remain on disk
 but are no longer mounted automatically.
 
-Mounts are printed before startup. The selected checkout and shared Git/JJ refs
+Mounts are printed before startup. The selected checkout and opted-in shared Git refs
 can be modified or deleted by the agent. Sibling checkout contents are not
 mounted. Host SSH/AWS directories, credential helpers, signing agents, global
 Git configuration, runtime control sockets, and host hc state are not mounted.
 Configure a guest Git identity if it needs to commit. `gh` is installed without
 mounting host GitHub credentials; authenticate inside the guest if needed. Image builds never include
 checkout contents, user configuration, or credentials.
+
+With `--git [PATH]`, Git metadata inside the selected checkout stays visible.
+For linked worktrees, the validated common Git store is shared automatically
+so status, staging, and commits work. A path inside a checkout selects its root.
+This does not share host Git configuration or credentials. No additional
+metadata stores are discovered through `.jj` links.
 
 With `--mount codex`, Codex uses your normal `.codex` directory. It starts with
 `--no-daemon --dangerously-bypass-approvals-and-sandbox` and
