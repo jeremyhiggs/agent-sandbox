@@ -123,23 +123,51 @@ function directSymlinkTarget(path: string): string {
 
 export function withSymlinkTargets(paths: string[], home?: string): string[] {
   const mounts = new Set<string>();
-  function visit(path: string, mount: boolean) {
+  function approve(path: string) {
     if (home && inside(home, path))
       throw new Error(`Refusing a mount that exposes host home: ${path}`);
-    if (mounts.has(path)) return;
-    if (mount) mounts.add(path);
+    mounts.add(path);
+  }
+  for (const path of paths) {
+    approve(path);
     const info = lstatSync(path);
-    if (info.isSymbolicLink()) visit(directSymlinkTarget(path), true);
+    if (info.isSymbolicLink()) approve(directSymlinkTarget(path));
     else if (info.isDirectory()) {
+      if (realpathSync(path) !== path)
+        throw new Error(`Skill root cannot use symlinked ancestors: ${path}`);
+      // Only the host's direct skill links approve additional roots. Contents
+      // of those roots can be writable through a separately shared checkout.
       for (const entry of readdirSync(path, { withFileTypes: true })) {
         const child = join(path, entry.name);
         if (entry.isSymbolicLink() && existsSync(child))
-          visit(directSymlinkTarget(child), true);
-        else if (entry.isDirectory()) visit(child, false);
+          approve(directSymlinkTarget(child));
       }
     }
   }
-  for (const path of paths) visit(path, true);
+  const visited = new Set<string>();
+  function visit(path: string) {
+    if (visited.has(path)) return;
+    visited.add(path);
+    const info = lstatSync(path);
+    if (info.isSymbolicLink()) {
+      const target = directSymlinkTarget(path);
+      if (![...mounts].some((root) => inside(target, root)))
+        throw new Error(
+          `Nested skill symlink points outside approved skill roots: ${path}`,
+        );
+      visit(target);
+    } else if (info.isDirectory()) {
+      for (const entry of readdirSync(path, { withFileTypes: true })) {
+        const child = join(path, entry.name);
+        if (
+          entry.isDirectory() ||
+          (entry.isSymbolicLink() && existsSync(child))
+        )
+          visit(child);
+      }
+    }
+  }
+  for (const path of paths) visit(path);
   return [...mounts].sort();
 }
 

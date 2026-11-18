@@ -278,8 +278,9 @@ Previous private Linux homes under `~/.local/share/agent-container` remain on di
 but are no longer mounted automatically.
 
 Mounts are printed before startup. The selected checkout and opted-in shared Git refs
-can be modified or deleted by the agent. Sibling checkout contents are not
-mounted. Host SSH/AWS directories, credential helpers, signing agents, global
+can be modified or deleted by the agent. Sibling working-tree paths are not
+mounted, but repository history and committed files on other branches remain accessible.
+Host SSH/AWS directories, credential helpers, signing agents, global
 Git configuration, runtime control sockets, and host hc state are not mounted.
 Configure a guest Git identity if it needs to commit. `gh` is installed without
 mounting host GitHub credentials; authenticate inside the guest if needed. Image builds never include
@@ -375,7 +376,10 @@ Skills inside `.codex` are writable unless a read-only shared skills mount cover
 them. Shared skills are available as files; discovery rules vary by agent.
 
 `.codex` itself must be a real directory. Skill links must point directly to
-canonical targets; chained links are rejected. Linked `auth.json` and
+canonical targets; chained links are rejected. Direct links in the host skills
+directory approve additional skill roots. Nested links must stay inside those
+roots and never add host mounts. Skills directories with symlinked ancestors
+are rejected. Linked `auth.json` and
 `config.toml` must stay inside the checkout or Codex directory so atomic file
 replacement persists. Mounts that expose the whole host home are rejected.
 

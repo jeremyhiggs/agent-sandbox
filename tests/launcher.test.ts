@@ -209,6 +209,72 @@ test("skill symlink targets are explicit mounts", () =>
     );
   }));
 
+test("nested links in a checkout-backed skill cannot add host mounts", () =>
+  fixture((root) => {
+    const work = join(root, "work"),
+      skills = join(root, ".agents", "skills"),
+      target = join(work, "skills", "review"),
+      secret = join(root, ".ssh");
+    mkdirSync(skills, { recursive: true });
+    mkdirSync(target, { recursive: true });
+    mkdirSync(secret);
+    symlinkSync(target, join(skills, "review"));
+    symlinkSync(secret, join(target, "secrets"));
+    assert.throws(
+      () => mountPlan(work, root, ["skills"]),
+      /outside approved skill roots/,
+    );
+  }));
+
+test("nested skill links inside approved roots need no additional mounts", () =>
+  fixture((root) => {
+    const skills = join(root, "skills"),
+      target = join(root, "elsewhere", "review"),
+      assets = join(target, "assets");
+    mkdirSync(skills);
+    mkdirSync(assets, { recursive: true });
+    symlinkSync(target, join(skills, "review"));
+    symlinkSync(assets, join(target, "asset-link"));
+    symlinkSync(target, join(target, "self"));
+    assert.deepEqual(
+      new Set(withSymlinkTargets([skills])),
+      new Set([skills, target]),
+    );
+  }));
+
+test("a linked skills directory does not approve links inside its target", () =>
+  fixture((root) => {
+    const skills = join(root, "skills"),
+      target = join(root, "work", "skills"),
+      secret = join(root, ".ssh");
+    mkdirSync(target, { recursive: true });
+    mkdirSync(secret);
+    symlinkSync(target, skills);
+    assert.deepEqual(
+      new Set(withSymlinkTargets([skills], root)),
+      new Set([skills, target]),
+    );
+    symlinkSync(secret, join(target, "secrets"));
+    assert.throws(
+      () => withSymlinkTargets([skills], root),
+      /outside approved skill roots/,
+    );
+  }));
+
+test("skill roots reject symlinked ancestors before approving their contents", () =>
+  fixture((root) => {
+    const work = join(root, "work"),
+      secret = join(root, ".ssh");
+    mkdirSync(join(work, "skills"), { recursive: true });
+    mkdirSync(secret);
+    symlinkSync(work, join(root, ".agents"));
+    symlinkSync(secret, join(work, "skills", "secrets"));
+    assert.throws(
+      () => mountPlan(work, root, ["skills"]),
+      /symlinked ancestors/,
+    );
+  }));
+
 test("skill symlink cannot expose host home", () =>
   fixture((root) => {
     const skills = join(root, ".agents", "skills");

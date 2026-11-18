@@ -47,7 +47,8 @@ Nothing is mounted by default. Recommend only the mounts needed for the task:
 
 - `--git` shares the current checkout/worktree; `--git PATH` selects another.
   Git metadata is included so staging and commits work. Linked worktrees share
-  their common Git store, including refs; sibling checkout contents stay private.
+  their common Git store, including refs. Sibling working-tree paths are excluded,
+  but repository history and committed files on other branches remain accessible.
 - `--mount codex`, `--mount claude`, and `--mount opencode` opt into existing
   file-backed login and settings. Keychain-only credentials require guest login.
 - `--mount skills` shares agent skills read-only. Existing settings and skills

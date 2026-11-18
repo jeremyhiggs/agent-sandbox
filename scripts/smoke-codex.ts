@@ -278,7 +278,7 @@ try {
   const acceptance =
     "import assert from 'node:assert/strict'; import {formatDuration} from './src/index.js'; for(const [input,expected] of [[0,'0s'],[59,'59s'],[60,'1m'],[3600,'1h'],[3661,'1h 1m 1s']]) assert.equal(formatDuration(input),expected); for(const input of [-1,0.5,NaN,Infinity,'60',Number.MAX_SAFE_INTEGER+1]) assert.throws(()=>formatDuration(input),RangeError); console.log('Independent acceptance checks passed');";
   console.log(guest(["node", "--input-type=module", "-e", acceptance]).trim());
-  const changed = command("git", ["diff", "--name-only"])
+  const changed = command("git", ["diff", "HEAD", "--name-only"])
     .trim()
     .split("\n")
     .sort();
