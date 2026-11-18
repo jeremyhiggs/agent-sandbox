@@ -13,7 +13,7 @@ Use an Apple silicon Mac supported by Apple's container runtime. Install mise,
 then clone the repository into a directory named `agent-sandbox`:
 
 ```sh
-git clone https://github.com/jeremyhiggs/agent-container.git agent-sandbox
+git clone https://github.com/jeremyhiggs/agent-sandbox.git agent-sandbox
 cd agent-sandbox
 ```
 
