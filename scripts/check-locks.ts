@@ -1,7 +1,97 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { packagePins } from "../image/packages.ts";
+
+const root = join(import.meta.dirname, "..");
+const toml = (file: string) =>
+  JSON.parse(
+    execFileSync("taplo", ["get", "-f", join(root, file), "-o", "json"], {
+      encoding: "utf8",
+    }),
+  );
+const config = toml("mise.toml");
+const host = toml("mise.lock");
+assert.equal(config.tool_config.locked, true);
+assert.equal(config.settings.npm.package_manager, "aube");
+assert.equal(host.lockfile_version, 4);
+for (const [name, pin] of Object.entries(config.tools)) {
+  const version =
+    typeof pin === "string" ? pin : (pin as { version: string }).version;
+  const entries = host.tools[name];
+  assert.equal(entries?.length, 1, `Missing or ambiguous host lock: ${name}`);
+  const entry = entries[0];
+  assert.equal(entry.version, version, `Host lock differs from pin: ${name}`);
+  if (name.startsWith("npm:")) {
+    assert.match(entry.aube.digest, /^sha256:[a-f0-9]{64}$/);
+    assert.ok(entry.aube.path.startsWith(".mise/locks/"));
+    const graph = readFileSync(
+      join(root, entry.aube.path, "aube-lock.yaml"),
+      "utf8",
+    );
+    const digest = (text: string) =>
+      `sha256:${createHash("sha256").update(text).digest("hex")}`;
+    assert.ok(
+      [digest(graph), digest(graph.replaceAll("\r\n", "\n"))].includes(
+        entry.aube.digest,
+      ),
+      `npm graph digest mismatch: ${name}`,
+    );
+    const manifest = JSON.parse(
+      readFileSync(join(root, entry.aube.path, "package.json"), "utf8"),
+    );
+    assert.deepEqual(manifest.dependencies, { [name.slice(4)]: version });
+    const parsed = JSON.parse(
+      execFileSync("yq", ["-o=json", ".", "-"], {
+        encoding: "utf8",
+        input: graph,
+      }),
+    );
+    const dependency = parsed.importers?.["."]?.dependencies?.[name.slice(4)];
+    assert.equal(
+      dependency?.specifier,
+      version,
+      `npm graph specifier differs: ${name}`,
+    );
+    assert.equal(
+      dependency?.version?.split("(")[0],
+      version,
+      `npm graph version differs: ${name}`,
+    );
+    const packages = Object.values(parsed.packages ?? {}) as {
+      resolution?: { integrity?: string };
+    }[];
+    assert.ok(packages.length, `Empty npm graph: ${name}`);
+    for (const artifact of packages) {
+      const integrity = artifact.resolution?.integrity ?? "";
+      assert.match(
+        integrity,
+        /^sha512-[A-Za-z0-9+/]{86}==$/,
+        `Unverified npm artifact: ${name}`,
+      );
+      assert.equal(
+        Buffer.from(integrity.slice(7), "base64").length,
+        64,
+        `Invalid SHA-512 integrity: ${name}`,
+      );
+    }
+  } else {
+    for (const platform of name === "container"
+      ? ["macos-arm64"]
+      : ["linux-x64", "linux-arm64", "macos-arm64"]) {
+      const artifact =
+        entry[`platforms.${platform}`] ?? entry.platforms?.[platform];
+      assert.ok(artifact, `Missing host platform: ${name}/${platform}`);
+      assert.match(artifact.checksum, /^sha256:[a-f0-9]{64}$/);
+      assert.ok(artifact.url.startsWith("https://"));
+    }
+  }
+}
+console.log(
+  "Host tools: locked versions, SHA-256 artifacts and SHA-512 npm graphs",
+);
 
 const image = join(import.meta.dirname, "..", "image");
 for (const arch of ["arm64", "amd64"]) {

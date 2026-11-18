@@ -411,7 +411,8 @@ mise run scan
 mise run smoke:cli
 ```
 
-`check` runs format/lint checks, TypeScript, unit tests, and lock validation.
+`check` runs format/lint checks, TypeScript, unit tests, lock validation, and
+Chrome stable-version freshness (requires network access).
 `check:image` tests all four image inventories, agent separation, and an actual
 agent-browser page load. `smoke:cli` uses fake state and a disposable linked
 worktree to test shell/custom commands, literal arguments, exit status, state
@@ -446,11 +447,13 @@ model requests using your subscription and is excluded from CI.
 
 CI builds all profiles on amd64 and arm64, checks each, and runs Trivy image
 scans. `build:ci`, `check:image:ci`, and `scan:ci` use Docker on Linux. Repository
-Trivy, pnpm audits of all dependency graphs, and Chrome freshness are separate
-audits. CI runs daily at **00:00 UTC**, plus push, pull request, and manual
+Trivy and pnpm audits of the root and four image-profile graphs are separate audits; Chrome
+freshness also runs in the required local `check`. CI runs daily at **00:00 UTC**, plus push, pull request, and manual
 triggers. The workflow becomes active when commits are pushed to the GitHub remote. There are no dependency update PR bots.
 
-HIGH/CRITICAL findings fail the security gates, including unfixed findings.
+Unsuppressed HIGH/CRITICAL findings fail the security gates, including unfixed
+findings. The explicit picomatch exception expires on 2026-12-18; see
+[reproducibility](docs/reproducibility.md#vulnerability-checks).
 Complete Trivy reports remain under `.artifacts/` and in CI artifacts. Scanner
 coverage of downloaded native binaries and Chrome is limited; version/checksum
 and browser freshness checks complement the scans. See [verification](docs/verification.md)

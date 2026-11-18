@@ -8,9 +8,16 @@ biome = "2.6.7"
 hadolint = "2.15.1"
 trivy = "0.76.2"
 taplo = "0.10.0"
+yq = "4.54.3"
 actionlint = "1.7.12"
 apko = "1.5.1"
 container = { version = "1.7.1", os = ["macos"] }
+
+[tool_config]
+locked = true
+
+[settings.npm]
+package_manager = "aube"
 
 # Image dependencies are passed to Dockerfile by scripts/sandbox.ts build.
 # OS dependencies and CLI archives have committed locks; refresh explicitly.
@@ -18,9 +25,9 @@ container = { version = "1.7.1", os = ["macos"] }
 IMAGE_MISE_VERSION = "2026.11.7"
 IMAGE_NODE_VERSION = "24.22.3"
 IMAGE_PNPM_VERSION = "11.28.12"
-IMAGE_BROWSER_VERSION = "157.0.8103.78"
-IMAGE_BROWSER_SHA256_ARM64 = "f354d666822a11d8fe99e923c44be77dd226fab2750c5b5947e6318818bf10f1"
-IMAGE_BROWSER_SHA256_AMD64 = "9223832977a13db3646201b1341c1f9cf08afa3ceae92540116d7b0c062364fb"
+IMAGE_BROWSER_VERSION = "158.0.8127.36"
+IMAGE_BROWSER_SHA256_ARM64 = "f811b64a50cbc73f94fda7b3f3b3bf62be5d9409b3207e6ead9b61e6706afffe"
+IMAGE_BROWSER_SHA256_AMD64 = "dba9cc838e1ce269c33ea68170881127bd15d078fc3ca5891c90802819a4d7c7"
 IMAGE_MISE_BASE = "ghcr.io/jdx/mise:2026.11.7@sha256:36a8408d3398aff30a761b4ae57f71f50942d64f4e7ecd5353ffaee7ec4fa63a"
 IMAGE_CODEX_VERSION = "0.167.2"
 IMAGE_OPENCODE_VERSION = "2.3.0"
@@ -48,13 +55,14 @@ run = [
   "taplo fmt --check",
   "hadolint Dockerfile",
   "actionlint",
+  "bash -n scripts/ci-setup.sh",
 ]
 
 [tasks.test]
 run = "node --test tests/*.test.ts"
 
 [tasks.check]
-depends = ["lint", "test", "lock:check"]
+depends = ["lint", "test", "lock:check", "audit:browser"]
 
 [tasks.build]
 description = "Build all four images with a shared browser base"

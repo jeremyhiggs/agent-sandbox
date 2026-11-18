@@ -59,10 +59,14 @@ const files = [
   "Dockerfile",
   ".dockerignore",
   "mise.toml",
+  "mise.lock",
+  ".trivyignore.yaml",
   "package.json",
   "pnpm-lock.yaml",
   ...globSync(
     [
+      ".mise/locks/*/*/package.json",
+      ".mise/locks/*/*/aube-lock.yaml",
       "scripts/*.ts",
       "image/*.ts",
       "image/*.json",

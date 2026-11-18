@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 ARG MISE_BASE
 FROM ${MISE_BASE} AS mise
 
@@ -16,7 +15,7 @@ ARG BROWSER_SHA256_ARM64
 ARG BROWSER_SHA256_AMD64
 COPY --from=mise /usr/local/bin/mise /usr/local/bin/mise
 ENV SHELL="/bin/bash" LANG="C.UTF-8" SSL_CERT_FILE="/etc/ssl/certs/ca-certificates.crt" \
-    PNPM_HOME="/opt/pnpm-home" MISE_NPM_PACKAGE_MANAGER="pnpm" \
+    PNPM_HOME="/opt/pnpm-home" \
     PATH="/opt/pnpm-home:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
     BROWSER_VERSION="${BROWSER_VERSION}" \
     BROWSER_SHA256_ARM64="${BROWSER_SHA256_ARM64}" \

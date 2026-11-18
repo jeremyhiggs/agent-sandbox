@@ -16,9 +16,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
-        with:
-          version: 2026.11.7
+      - name: Install checksum-verified tools
+        run: bash scripts/ci-setup.sh
       - run: mise run setup
       - run: mise run check
       - run: mise run smoke:context:ci
@@ -32,9 +31,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
-        with:
-          version: 2026.11.7
+      - name: Install checksum-verified tools
+        run: bash scripts/ci-setup.sh
       - run: mise run setup
       - run: mise run audit:${{ matrix.check }}
       - name: Preserve repository audit reports
@@ -55,9 +53,8 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3
-        with:
-          version: 2026.11.7
+      - name: Install checksum-verified tools
+        run: bash scripts/ci-setup.sh
       - name: Build Linux image
         run: mise run build:ci
       - name: Check browser and agent separation in every image

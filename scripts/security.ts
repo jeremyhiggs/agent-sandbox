@@ -13,6 +13,9 @@ if (command === "repo") {
     "trivy",
     [
       "fs",
+      "--ignorefile",
+      join(root, ".trivyignore.yaml"),
+      "--show-suppressed",
       "--scanners",
       "vuln",
       "--include-dev-deps",

@@ -68,6 +68,16 @@ test("installation copies a standalone runtime, upgrades its shim and protects u
     );
     assert.ok(lstatSync(join(installation, "scripts", "sandbox.ts")).isFile());
     assert.ok(existsSync(join(installation, "image", "apko.lock.json")));
+    for (const file of [
+      "mise.lock",
+      ".trivyignore.yaml",
+      ".mise/locks/npm-typescript/7.0.2/aube-lock.yaml",
+      ".mise/locks/npm-typescript/7.0.2/package.json",
+    ])
+      assert.equal(
+        readFileSync(join(installation, file), "utf8"),
+        readFileSync(join(ROOT, file), "utf8"),
+      );
     assert.ok(!existsSync(join(installation, ".env")));
     assert.ok(!existsSync(join(installation, "node_modules")));
     assert.ok(!readFileSync(shim, "utf8").includes(ROOT));

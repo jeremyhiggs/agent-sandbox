@@ -585,6 +585,9 @@ function scan(engine: string, image: string): void {
     );
     run("trivy", [
       "image",
+      "--ignorefile",
+      join(ROOT, ".trivyignore.yaml"),
+      "--show-suppressed",
       "--input",
       input,
       "--scanners",

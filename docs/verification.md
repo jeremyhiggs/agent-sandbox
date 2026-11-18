@@ -9,11 +9,11 @@ remain configured CI coverage.
 
 | Area                    | Command                  | Verified behavior                                                                                                   |
 | ----------------------- | ------------------------ | ------------------------------------------------------------------------------------------------------------------- |
-| Source and locks        | `mise run check`         | Formatting, lint, types, unit tests, and dependency-lock consistency                                                |
+| Source and locks        | `mise run check`         | Formatting, lint, types, unit tests, dependency-lock consistency, and Chrome freshness                              |
 | Image build             | `mise run build`         | Four Dockerfile targets sharing the locked apko OS and browser base                                                 |
 | Build context           | `mise run smoke:context` | Declared inputs included; retained handoffs, private files, and installed dependencies excluded                     |
 | Image runtime           | `mise run check:image`   | Exact APK inventory, tool versions, agent separation, launch flags, and a real browser page load                    |
-| Image vulnerabilities   | `mise run scan`          | Trivy scans of all four images; zero findings in the captured reports                                               |
+| Image vulnerabilities   | `mise run scan`          | Trivy scans of all four images, including explicit expiring exceptions                                              |
 | Repository dependencies | `mise run audit`         | Root and profile pnpm audits, repository Trivy scan, and Chrome stable-version freshness                            |
 | Installed launcher      | `mise run smoke:cli`     | Persistent lifecycle, independent terminals, worktrees, opt-in mounts, and isolated host hc supervision             |
 | Herdr app               | `mise run smoke:herdr`   | Two guest terminals in the same existing app space/tab, with the selected session preserved                         |
@@ -150,9 +150,10 @@ The ignored local reports are:
 
 Native apko SPDX SBOMs are retained under `.artifacts/apko/sbom/`.
 
-The captured image and dependency reports contain zero findings. HIGH or
-CRITICAL findings fail the gates even when no fixed version is available;
-complete reports retain the lower severities too.
+HIGH or CRITICAL findings fail the gates even when no fixed version is available,
+except for explicit, expiring entries in `.trivyignore.yaml`. The current entry
+covers CVE-2026-112366 in pnpm's bundled picomatch only and expires on 2026-12-18.
+Complete reports retain lower severities and suppressed findings too.
 
 Trivy covers the recognized Wolfi and discoverable Node inventories. Its coverage
 of downloaded native binaries and Chrome is limited. Archive checksums, browser
@@ -166,5 +167,7 @@ browser freshness checks. Image reports, repository reports, and native OS SBOMs
 are uploaded as artifacts.
 
 The schedule is daily at **00:00 UTC** (`0 0 * * *`), with push, pull request,
-and manual triggers. Hosted CI has not run yet; local arm64 verification is the
-executed evidence described above.
+and manual triggers. The initial hosted run built and checked all four images on
+both architectures. Its browser audit rejected the older Chrome pin, and its
+image scans rejected pnpm's unfixed picomatch advisory. The scan failure was also
+reproduced locally against the exact pnpm archive.

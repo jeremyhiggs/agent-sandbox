@@ -9,7 +9,7 @@ explicitly; security scans use the current advisory database.
 | Input                                    | Lock source                                         | Build behavior                                                                      |
 | ---------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------------- |
 | Wolfi OS packages and their dependencies | `image/apko.yaml`, `image/apko.lock.json`           | Apko verifies the recipe and installs locked packages for the selected architecture |
-| Apko and host build tools                | `mise.toml`                                         | Use the specified tool versions                                                     |
+| Apko and host build tools                | `mise.toml`, `mise.lock`, `.mise/locks/`            | Locked SHA-256 native artifacts and SHA-512 npm dependency graphs                   |
 | Mise image                               | Digest reference in `mise.toml`                     | Copy mise from the specified OCI content                                            |
 | pnpm, JJ, and hc archives                | `image/artifacts.json`                              | Verify archive SHA-256 before extraction                                            |
 | Agent CLIs and agent-browser             | `image/tools/PROFILE/{package.json,pnpm-lock.yaml}` | Frozen pnpm install with lifecycle scripts disabled                                 |
@@ -25,6 +25,14 @@ the former plain-text inventories and custom APK solver-output parser.
 mise, standalone archive metadata, and the frozen pnpm graphs. During each image
 build, `apko build --lockfile` also rejects a recipe that no longer matches its
 lock. It verifies packages using apko's native lock and repository verification.
+
+Host tool installation requires the committed mise lock. Native tools, including
+Trivy, are downloaded as archives and checked against the lock's SHA-256 before
+execution; no downloaded installer script is run. npm tools use mise's embedded
+aube backend with frozen dependency graphs and SHA-512 integrity checks.
+CI verifies the mise bootstrap binary's SHA-256 before execution and uses a fresh
+tool directory with caching disabled. The image's mise binary comes from a
+digest-pinned OCI image. Docker builds use the builder's bundled frontend.
 
 ## Dockerfile and Apple container builds
 
@@ -49,6 +57,15 @@ The final image checks compare its installed APK inventory with the native lock.
 Packages installed later by a guest repository are outside this build guarantee.
 
 ## Refresh the locks
+
+After changing host tool versions in `mise.toml`, regenerate and commit both the
+lock and its npm sidecars:
+
+```sh
+mise lock --upgrade --platform linux-x64,linux-arm64,macos-arm64
+mise install --locked
+mise run lock:check
+```
 
 Edit requested OS packages in `image/apko.yaml`. Node and gh version checks still
 require agreement with `mise.toml`. Then run:
@@ -94,6 +111,13 @@ to the GitHub remote. There are no automated dependency update PRs.
 HIGH or CRITICAL findings fail, including unfixed findings. Complete Trivy
 reports and apko SBOMs remain under `.artifacts/`; CI preserves them as artifacts.
 Downloaded native binaries and Chrome have scanner coverage limits.
+
+The temporary exception in `.trivyignore.yaml` accepts CVE-2026-112366 only for
+`picomatch@4.0.7` at `opt/pnpm/dist/node_modules/picomatch/package.json`, bundled
+in pnpm 11.28.12. The [advisory](https://github.com/advisories/GHSA-fc5q-39xc-vjpf)
+lists no patched version as of 2026-11-18. This exception expires on 2026-12-18;
+remove it when a fixed pnpm distribution is available. Suppressed findings remain
+in the JSON reports. Other HIGH/CRITICAL findings still fail.
 
 ## Limits
 
