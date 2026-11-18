@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { packagePins } from "../image/packages.ts";
 
@@ -24,9 +24,30 @@ for (const [name, pin] of Object.entries(config.tools)) {
   assert.equal(entries?.length, 1, `Missing or ambiguous host lock: ${name}`);
   const entry = entries[0];
   assert.equal(entry.version, version, `Host lock differs from pin: ${name}`);
+  assert.ok(
+    Array.isArray(entry.specifiers) && entry.specifiers.includes(version),
+    `Host lock does not bind the configured request: ${name}`,
+  );
   if (name.startsWith("npm:")) {
     assert.match(entry.aube.digest, /^sha256:[a-f0-9]{64}$/);
     assert.ok(entry.aube.path.startsWith(".mise/locks/"));
+    let sidecar = root;
+    for (const component of entry.aube.path.split("/")) {
+      assert.ok(
+        component && component !== "." && component !== "..",
+        "Invalid sidecar path",
+      );
+      sidecar = join(sidecar, component);
+      assert.ok(
+        !lstatSync(sidecar).isSymbolicLink(),
+        "Symlink in sidecar path",
+      );
+    }
+    for (const file of ["aube-lock.yaml", "package.json"])
+      assert.ok(
+        !lstatSync(join(sidecar, file)).isSymbolicLink(),
+        "Symlinked sidecar file",
+      );
     const graph = readFileSync(
       join(root, entry.aube.path, "aube-lock.yaml"),
       "utf8",

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { lstatSync } from "node:fs";
 import { join } from "node:path";
 
 const root = join(import.meta.dirname, "..");
@@ -18,7 +18,10 @@ const scripts = execFileSync(
   { cwd: root, encoding: "utf8" },
 )
   .split("\0")
-  .filter((file) => file && existsSync(join(root, file)));
+  .filter(
+    (file) =>
+      file && lstatSync(join(root, file), { throwIfNoEntry: false })?.isFile(),
+  );
 if (scripts.length) {
   const options = { cwd: root, stdio: "inherit" as const };
   execFileSync(

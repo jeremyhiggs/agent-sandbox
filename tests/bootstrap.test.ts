@@ -27,6 +27,7 @@ test("CI bootstrap never executes a download with a mismatched SHA-256", () => {
         encoding: "utf8",
         env: {
           ...process.env,
+          LC_ALL: "C",
           PATH: `${bin}:${process.env.PATH}`,
           RUNNER_ARCH: arch,
           RUNNER_TEMP: root,
@@ -37,7 +38,10 @@ test("CI bootstrap never executes a download with a mismatched SHA-256", () => {
         },
       });
       assert.notEqual(result.status, 0);
-      assert.match(result.stdout + result.stderr, /FAILED|did not match/);
+      assert.match(
+        result.stdout + result.stderr,
+        /computed checksums? did not match/i,
+      );
       assert.ok(!existsSync(join(root, "executed")));
       assert.ok(!existsSync(join(root, "env")));
       assert.ok(!existsSync(join(root, "path")));
