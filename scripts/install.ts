@@ -63,6 +63,7 @@ const files = [
   ".trivyignore.yaml",
   "package.json",
   "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
   ...globSync(
     [
       ".mise/locks/*/*/package.json",

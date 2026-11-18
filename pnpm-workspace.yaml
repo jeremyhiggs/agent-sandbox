@@ -1,0 +1,24 @@
+packages:
+  - image/tools/*
+
+# Keep the root and each image profile's existing independent dependency graph.
+sharedWorkspaceLockfile: false
+recursiveInstall: false
+
+# Apply these checks to frozen installs too, including inside Docker builds.
+minimumReleaseAge: 1440
+minimumReleaseAgeStrict: true
+minimumReleaseAgeIgnoreMissingTime: false
+trustPolicy: no-downgrade
+trustLockfile: false
+blockExoticSubdeps: true
+
+# No dependency or project installation scripts are needed.
+ignoreScripts: true
+allowBuilds: {}
+strictDepBuilds: true
+dangerouslyAllowAllBuilds: false
+verifyStoreIntegrity: true
+strictStorePkgContentCheck: true
+engineStrict: true
+saveExact: true

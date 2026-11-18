@@ -1,6 +1,7 @@
 *
 !Dockerfile
 !mise.toml
+!pnpm-workspace.yaml
 !image/
 image/**
 !image/*.ts

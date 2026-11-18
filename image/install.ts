@@ -26,12 +26,11 @@ const locks = JSON.parse(
   readFileSync(join(import.meta.dirname, "artifacts.json"), "utf8"),
 ) as {
   pnpm: Artifact & { version: string };
-  jj: Release;
   hc: Release;
 };
 verifyPackageInventory(packagePins(), installedPackages());
 async function install(
-  tool: "pnpm" | "jj" | "hc",
+  tool: "pnpm" | "hc",
   destination: string,
   members: string[],
 ) {
@@ -63,8 +62,6 @@ async function install(
     rmSync(temp, { recursive: true });
   }
 }
-await install("jj", "/opt/jj", ["./jj", "./LICENSE"]);
-symlinkSync("/opt/jj/jj", "/usr/local/bin/jj");
 await install("pnpm", "/opt/pnpm", ["--strip-components=1"]);
 symlinkSync("/opt/pnpm/bin/pnpm.cjs", "/usr/local/bin/pnpm");
 const manifest = JSON.parse(
@@ -88,7 +85,7 @@ for (const tool of ["agent-browser"])
   );
 await install("hc", "/usr/local/bin", ["herdr-core"]);
 symlinkSync("herdr-core", "/usr/local/bin/hc");
-for (const tool of ["mise", "node", "pnpm", "agent-browser", "hc", "jj"])
+for (const tool of ["mise", "node", "pnpm", "agent-browser", "hc"])
   run(tool, ["--version"]);
 
 rmSync("/opt/pnpm-home/store", { recursive: true, force: true });

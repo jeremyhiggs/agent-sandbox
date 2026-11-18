@@ -29,7 +29,7 @@ image alone does not justify a distribution change. Full results and scan limits
 are in [image verification](verification.md).
 
 Wolfi uses glibc, unlike musl-based Alpine. This supports common prebuilt Linux
-tools without an Alpine-specific build. Our Codex, hc, JJ, agent-browser, Chrome,
+tools without an Alpine-specific build. Our Codex, hc, agent-browser, Chrome,
 and mise checks passed. Glibc does not guarantee compatibility with every binary
 or its required system libraries. See [Chainguard's libc explanation](https://www.chainguard.dev/docs/chainguard/containers/concepts/glibc-vs-musl).
 

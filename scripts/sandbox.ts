@@ -552,7 +552,6 @@ export function buildImage(
     "CLAUDE_VERSION",
     "AGENT_BROWSER_VERSION",
     "HC_VERSION",
-    "JJ_VERSION",
   ]) {
     const value = process.env[`IMAGE_${name}`];
     if (!value) throw new Error(`Missing IMAGE_${name}; run through mise`);

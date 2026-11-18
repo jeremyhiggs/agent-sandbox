@@ -16,11 +16,19 @@ for (const tool of [
   "gh",
   "agent-browser",
   "hc",
-  "jj",
 ]) {
   execFileSync(tool, ["--version"], { stdio: "inherit" });
 }
-for (const tool of ["npm", "npx", "gcc", "g++", "cc", "make", "pkg-config"]) {
+for (const tool of [
+  "jj",
+  "npm",
+  "npx",
+  "gcc",
+  "g++",
+  "cc",
+  "make",
+  "pkg-config",
+]) {
   assert.notEqual(
     spawnSync("sh", ["-c", 'command -v "$1"', "check", tool]).status,
     0,

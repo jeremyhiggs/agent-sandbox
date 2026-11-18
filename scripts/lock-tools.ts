@@ -35,22 +35,15 @@ const lock: Record<string, unknown> = {
     )),
   },
 };
-for (const tool of ["JJ", "HC"]) {
-  const entries: Record<string, unknown> = { version: version(tool) };
-  for (const [arch, triple] of [
-    ["arm64", "aarch64"],
-    ["amd64", "x86_64"],
-  ]) {
-    const release = manifest.targets[`linux-${triple}`];
-    entries[arch] =
-      tool === "JJ"
-        ? await artifact(
-            `https://github.com/jj-vcs/jj/releases/download/v${version(tool)}/jj-v${version(tool)}-${triple}-unknown-linux-musl.tar.gz`,
-          )
-        : await artifact(release.url, release.sha256);
-  }
-  lock[tool.toLowerCase()] = entries;
+const hc: Record<string, unknown> = { version: version("HC") };
+for (const [arch, triple] of [
+  ["arm64", "aarch64"],
+  ["amd64", "x86_64"],
+]) {
+  const release = manifest.targets[`linux-${triple}`];
+  hc[arch] = await artifact(release.url, release.sha256);
 }
+lock.hc = hc;
 for (const [profile, dependency, variable] of [
   ["base", "agent-browser", "AGENT_BROWSER"],
   ["codex", "@openai/codex", "CODEX"],

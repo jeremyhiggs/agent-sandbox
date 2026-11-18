@@ -55,7 +55,7 @@ The OS build checks also verified:
   from reading partial output.
 - A batch prepares its OS once and reuses it for all four images.
 
-Image runtime checks exercise mise, Node, pnpm, Git, gh, JJ, hc,
+Image runtime checks exercise mise, Node, pnpm, Git, gh, hc,
 agent-browser, and the selected agent. They check native agent launch flags,
 OpenSSH 10.4 or newer, and absence of npm, npx, generic compilers, make, and
 pkg-config. A Chrome page is opened through agent-browser, its title is read,

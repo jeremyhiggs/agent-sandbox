@@ -15,12 +15,16 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install checksum-verified tools
         run: bash scripts/ci-setup.sh
-      - run: mise run setup
-      - run: mise run check
-      - run: mise run smoke:context:ci
+      - name: Install locked development dependencies
+        run: mise run setup
+      - name: Check source, locks, and browser freshness
+        run: mise run check
+      - name: Verify Docker build context
+        run: mise run smoke:context:ci
 
   audit:
     strategy:
@@ -30,11 +34,14 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install checksum-verified tools
         run: bash scripts/ci-setup.sh
-      - run: mise run setup
-      - run: mise run audit:${{ matrix.check }}
+      - name: Install locked development dependencies
+        run: mise run setup
+      - name: Audit ${{ matrix.check }}
+        run: mise run audit:${{ matrix.check }}
       - name: Preserve repository audit reports
         if: always()
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
@@ -52,7 +59,8 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
       - name: Install checksum-verified tools
         run: bash scripts/ci-setup.sh
       - name: Build Linux image

@@ -1,6 +1,0 @@
-{
-  "ignores": ["**/node_modules/**", ".artifacts/**"],
-  "config": {
-    "MD013": false
-  }
-}

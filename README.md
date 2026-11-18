@@ -4,7 +4,7 @@ Version **0.1.0**. See the [release notes](CHANGELOG.md) for scope and limitatio
 
 Run shells, Codex, OpenCode, or Claude Code in a named Linux sandbox using
 Apple's `container` runtime. All images include Wolfi Linux, mise, Node, pnpm,
-Git, Git LFS, GitHub CLI (`gh`), Jujutsu, agent-browser, Chrome for Testing, and Herdr's `hc`.
+Git, Git LFS, GitHub CLI (`gh`), agent-browser, Chrome for Testing, and Herdr's `hc`.
 The agent images add one agent CLI each. Scripts are TypeScript executed by Node.
 
 ## Setup

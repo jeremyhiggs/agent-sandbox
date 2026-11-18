@@ -19,6 +19,7 @@ const context = join(root, "context"),
   output = join(root, "output");
 const allowed = [
   "mise.toml",
+  "pnpm-workspace.yaml",
   "image/install.ts",
   "image/artifacts.json",
   "image/apko.lock.json",

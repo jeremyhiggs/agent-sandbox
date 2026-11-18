@@ -70,6 +70,7 @@ test("installation copies a standalone runtime, upgrades its shim and protects u
     assert.ok(existsSync(join(installation, "image", "apko.lock.json")));
     for (const file of [
       "mise.lock",
+      "pnpm-workspace.yaml",
       ".trivyignore.yaml",
       ".mise/locks/npm-typescript/7.0.2/aube-lock.yaml",
       ".mise/locks/npm-typescript/7.0.2/package.json",

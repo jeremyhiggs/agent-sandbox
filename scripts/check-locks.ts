@@ -120,7 +120,7 @@ assert.ok(
 const artifacts = JSON.parse(
   readFileSync(join(image, "artifacts.json"), "utf8"),
 );
-for (const tool of ["pnpm", "jj", "hc"]) {
+for (const tool of ["pnpm", "hc"]) {
   assert.equal(
     artifacts[tool].version,
     process.env[`IMAGE_${tool.toUpperCase()}_VERSION`],

@@ -11,7 +11,7 @@ explicitly; security scans use the current advisory database.
 | Wolfi OS packages and their dependencies | `image/apko.yaml`, `image/apko.lock.json`           | Apko verifies the recipe and installs locked packages for the selected architecture |
 | Apko and host build tools                | `mise.toml`, `mise.lock`, `.mise/locks/`            | Locked SHA-256 native artifacts and SHA-512 npm dependency graphs                   |
 | Mise image                               | Digest reference in `mise.toml`                     | Copy mise from the specified OCI content                                            |
-| pnpm, JJ, and hc archives                | `image/artifacts.json`                              | Verify archive SHA-256 before extraction                                            |
+| pnpm and hc archives                     | `image/artifacts.json`                              | Verify archive SHA-256 before extraction                                            |
 | Agent CLIs and agent-browser             | `image/tools/PROFILE/{package.json,pnpm-lock.yaml}` | Frozen pnpm install with lifecycle scripts disabled                                 |
 | Chrome                                   | Version and architecture hashes in `mise.toml`      | Verify the pinned archive checksum                                                  |
 | Repository Node dependencies             | Root `pnpm-lock.yaml`                               | Frozen installation                                                                 |
@@ -33,6 +33,20 @@ aube backend with frozen dependency graphs and SHA-512 integrity checks.
 CI verifies the mise bootstrap binary's SHA-256 before execution and uses a fresh
 tool directory with caching disabled. The image's mise binary comes from a
 digest-pinned OCI image. Docker builds use the builder's bundled frontend.
+
+The runtime base starts from `scratch` with apko's locked OS filesystem; it copies
+only the mise executable from the OCI source. It does not run the host tool
+installation. `image/artifacts.json` therefore locks the pnpm archive needed to
+bootstrap package installs and the native hc executable. The profile package
+manifests and pnpm locks cover agent-browser and the selected agent separately.
+
+`pnpm-workspace.yaml` defines the installation policy for the root and four image
+profiles, each retaining its own lockfile. The same policy is copied into every
+image profile before installation. It disables installation scripts, rejects
+exotic transitive sources and trust downgrades, requires package publication
+metadata and a 24-hour release cooldown, and verifies store integrity. Frozen
+installs still enforce the policy; builds do not trust a lockfile to bypass it.
+Root installs do not recursively install the agent profiles.
 
 ## Dockerfile and Apple container builds
 

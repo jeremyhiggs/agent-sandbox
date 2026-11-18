@@ -3,8 +3,6 @@ node = "24.22.3"
 pnpm = "11.28.12"
 biome = "2.6.7"
 "npm:typescript" = "7.0.2"
-"npm:prettier" = "3.10.1"
-"npm:markdownlint-cli2" = "0.24.1"
 hadolint = "2.15.1"
 trivy = "0.76.2"
 taplo = "0.10.0"
@@ -34,24 +32,17 @@ IMAGE_OPENCODE_VERSION = "2.3.0"
 IMAGE_CLAUDE_VERSION = "2.1.325"
 IMAGE_AGENT_BROWSER_VERSION = "0.43.0"
 IMAGE_HC_VERSION = "0.1.20"
-IMAGE_JJ_VERSION = "0.47.1"
 IMAGE_GH_VERSION = "2.104.0"
 
 [tasks.fmt]
 description = "Format scripts, documentation, and configuration"
-run = [
-  "biome check --write .",
-  "prettier --write '**/*.md' '**/*.yml'",
-  "taplo fmt",
-]
+run = ["biome check --write .", "taplo fmt"]
 
 [tasks.lint]
 description = "Check scripts, docs, Dockerfile, and CI"
 run = [
   "biome check .",
   "tsc --noEmit",
-  "prettier --check '**/*.md' '**/*.yml'",
-  "markdownlint-cli2 '**/*.md'",
   "taplo fmt --check",
   "hadolint Dockerfile",
   "actionlint",
