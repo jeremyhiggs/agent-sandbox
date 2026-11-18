@@ -2,6 +2,6 @@
   "name": "agent-sandbox-codex",
   "private": true,
   "dependencies": {
-    "@openai/codex": "0.167.2"
+    "@openai/codex": "0.167.1"
   }
 }

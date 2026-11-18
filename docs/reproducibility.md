@@ -44,7 +44,7 @@ manifests and pnpm locks cover agent-browser and the selected agent separately.
 profiles, each retaining its own lockfile. The same policy is copied into every
 image profile before installation. It disables installation scripts, rejects
 exotic transitive sources and trust downgrades, requires package publication
-metadata and a 24-hour release cooldown, and verifies store integrity. Frozen
+metadata and a seven-day release cooldown, and verifies store integrity. Frozen
 installs still enforce the policy; builds do not trust a lockfile to bypass it.
 Root installs do not recursively install the agent profiles.
 

@@ -1,8 +1,6 @@
 # Agent sandbox verification
 
-This file defines repository verification requirements. Use the `github-account`
-skill before PR operations and follow any applicable checkout-local account
-guidance.
+This file defines repository verification requirements.
 
 ## Before committing
 
@@ -18,8 +16,9 @@ guidance.
    scripts must pass shfmt and ShellCheck through the same normal validation;
    Biome's unsupported-language warning is not a shell check.
 4. Run `git diff --check` and `git diff --cached --check`.
-5. Invoke the `privacy-gate` skill and pass `privacy-gate pre-commit` after
-   staging. Stop on findings; never bypass hooks with `--no-verify`.
+5. Review staged changes for secrets, credentials, and unintended personal data.
+   Run configured security hooks and available secret scanners. Stop on findings;
+   never bypass hooks with `--no-verify`.
 
 Run focused tests while developing, but do not substitute them for the final
 `mise run check`. Fix failures before committing. Do not create new tests that
@@ -57,16 +56,18 @@ Runtime checks must include an actual Chrome page load and agent separation.
 - For documentation-only changes that do not affect runtime/build behavior,
   configuration, or dependencies, source checks and privacy review suffice;
   explain the image-test omission in the handoff.
-- Invoke `coderabbit-local-review` before push/PR updates. Address valid findings
-  and rerun affected validation after fixes. Reuse current review and test
-  evidence only while the reviewed inputs remain unchanged; rerun live audits
+- If CodeRabbit is installed and authenticated, run a local review before
+  push/PR updates. If unavailable, report that limitation and review the diff
+  manually. Address valid findings and rerun affected validation after fixes.
+  Reuse current review and test evidence only while the reviewed inputs remain
+  unchanged; rerun live audits
   before publication if their results are stale.
 - Inspect existing CI failures and reproduce the failing job's commands locally.
   Confirm the final commit contains the tested changes. State which architecture
   was tested locally; do not claim local amd64 coverage from an arm64 run.
 - Ask for approval before pushing, opening/updating a PR, resolving remote review
   state, or rewriting history. Complete local implementation and verification
-  first. Run the privacy gate for the publication scope and retain the normal
+  first. Check unpublished changes for secrets and retain the normal
   pre-push hook. Verify the remote branch/PR head after an approved push.
 
 If a required check cannot run, name the command, blocker, and unverified scope

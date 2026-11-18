@@ -1,6 +1,13 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const root = join(import.meta.dirname, "..", "image");
@@ -51,23 +58,42 @@ for (const [profile, dependency, variable] of [
   ["claude", "@anthropic-ai/claude-code", "CLAUDE"],
 ]) {
   const tools = join(root, "tools", profile);
-  mkdirSync(tools, { recursive: true });
-  writeFileSync(
-    join(tools, "package.json"),
-    JSON.stringify(
-      {
-        name: `agent-sandbox-${profile}`,
-        private: true,
-        dependencies: { [dependency]: version(variable) },
-      },
-      null,
-      2,
-    ) + "\n",
-  );
-  execFileSync("pnpm", ["install", "--lockfile-only", "--ignore-scripts"], {
-    cwd: tools,
-    stdio: "inherit",
-  });
+  // Resolve afresh under the policy, without first accepting an obsolete graph
+  // that a stricter cooldown may reject. Publish only a successful resolution.
+  const temporary = mkdtempSync(join(tmpdir(), "agent-sandbox-lock-"));
+  try {
+    writeFileSync(
+      join(temporary, "package.json"),
+      JSON.stringify(
+        {
+          name: `agent-sandbox-${profile}`,
+          private: true,
+          dependencies: { [dependency]: version(variable) },
+        },
+        null,
+        2,
+      ) + "\n",
+    );
+    copyFileSync(
+      join(root, "..", "pnpm-workspace.yaml"),
+      join(temporary, "pnpm-workspace.yaml"),
+    );
+    execFileSync(
+      "pnpm",
+      [
+        "install",
+        "--lockfile-only",
+        "--no-frozen-lockfile",
+        "--ignore-scripts",
+      ],
+      { cwd: temporary, stdio: "inherit" },
+    );
+    mkdirSync(tools, { recursive: true });
+    for (const file of ["package.json", "pnpm-lock.yaml"])
+      copyFileSync(join(temporary, file), join(tools, file));
+  } finally {
+    rmSync(temporary, { recursive: true, force: true });
+  }
 }
 writeFileSync(
   join(root, "artifacts.json"),

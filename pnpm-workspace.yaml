@@ -1,3 +1,4 @@
+# pnpm always includes the root package and its pnpm-lock.yaml as well.
 packages:
   - image/tools/*
 
@@ -6,7 +7,7 @@ sharedWorkspaceLockfile: false
 recursiveInstall: false
 
 # Apply these checks to frozen installs too, including inside Docker builds.
-minimumReleaseAge: 1440
+minimumReleaseAge: 10080
 minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 trustPolicy: no-downgrade

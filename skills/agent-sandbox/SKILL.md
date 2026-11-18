@@ -71,8 +71,15 @@ agents, SSH keys, and hc sockets are not mounted.
 
 ## Progress and lifecycle
 
-Use `terminals --name feature` to discover guest terminal IDs. `attach --name
-feature --terminal ID` reconnects to one; `shell --name feature` creates another.
+Discover guest terminal IDs, reconnect to one, or create another shell:
+
+```sh
+agent-sandbox terminals --name feature
+agent-sandbox attach --name feature --terminal ID
+agent-sandbox shell --name feature
+```
+
+Replace `ID` with a terminal ID from the first command.
 With Herdr integration, use `hc read feature/ID` and `hc send feature/ID 'task'`.
 Managed terminals launched by an hc caller in the same host core inherit its
 parent route. Inside the guest, `hc get "$HC_TERMINAL_ID" --json` shows the
@@ -98,12 +105,12 @@ background terminal shows the launcher/workload lifetime; `agent-sandbox status`
 and Herdr show the VM's lifetime. Report the sandbox name and retained state
 when handing control back to the user.
 
-- `stop --name feature` stops all guest processes and removes the machine/space
-  from Herdr while retaining the filesystem.
-- `start --name feature` restarts it and opens a new workload; it does not resume
-  old processes.
-- `delete --name feature` destroys the guest filesystem and removes its Herdr
-  entry. Shared checkout changes and opted-in host state survive.
+- `agent-sandbox stop --name feature` stops all guest processes and removes the
+  machine/space from Herdr while retaining the filesystem.
+- `agent-sandbox start --name feature` restarts it and opens a new workload;
+  it does not resume old processes.
+- `agent-sandbox delete --name feature` destroys the guest filesystem and removes
+  its Herdr entry. Shared checkout changes and opted-in host state survive.
 - `--rm` at creation removes the filesystem when the VM stops; it is opt-in.
 
 Follow the checkout's instructions and authorization boundaries for commits,
