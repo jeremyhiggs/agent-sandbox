@@ -8,6 +8,8 @@ trivy = "0.76.2"
 taplo = "0.10.0"
 yq = "4.54.3"
 actionlint = "1.7.12"
+shellcheck = "0.11.0"
+shfmt = "3.14.1"
 apko = "1.5.1"
 container = { version = "1.7.1", os = ["macos"] }
 
@@ -36,7 +38,11 @@ IMAGE_GH_VERSION = "2.104.0"
 
 [tasks.fmt]
 description = "Format scripts, documentation, and configuration"
-run = ["biome check --write .", "taplo fmt"]
+run = [
+  "biome check --write .",
+  "node scripts/check-shell.ts --write",
+  "taplo fmt",
+]
 
 [tasks.lint]
 description = "Check scripts, docs, Dockerfile, and CI"
@@ -46,7 +52,7 @@ run = [
   "taplo fmt --check",
   "hadolint Dockerfile",
   "actionlint",
-  "bash -n scripts/ci-setup.sh",
+  "node scripts/check-shell.ts",
 ]
 
 [tasks.test]

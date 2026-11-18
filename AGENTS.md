@@ -14,6 +14,9 @@ guidance.
 3. Run `mise run check` against the final changes. It includes formatting, lint,
    TypeScript, unit tests, lock consistency, and the live Chrome freshness audit.
    Browser freshness requires network access; a network failure is not a pass.
+   Biome must cover JavaScript/TypeScript and Markdown throughout the repo. Shell
+   scripts must pass shfmt and ShellCheck through the same normal validation;
+   Biome's unsupported-language warning is not a shell check.
 4. Run `git diff --check` and `git diff --cached --check`.
 5. Invoke the `privacy-gate` skill and pass `privacy-gate pre-commit` after
    staging. Stop on findings; never bypass hooks with `--no-verify`.

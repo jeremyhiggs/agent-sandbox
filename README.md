@@ -413,6 +413,9 @@ mise run smoke:cli
 
 `check` runs format/lint checks, TypeScript, unit tests, lock validation, and
 Chrome stable-version freshness (requires network access).
+Biome covers JavaScript/TypeScript, Markdown, JSON, and YAML throughout the repo.
+Shell scripts use shfmt and ShellCheck because Biome does not support shell.
+Both shell checks run through `lint` and `check`; `fmt` also formats shell scripts.
 `check:image` tests all four image inventories, agent separation, and an actual
 agent-browser page load. `smoke:cli` uses fake state and a disposable linked
 worktree to test shell/custom commands, literal arguments, exit status, state

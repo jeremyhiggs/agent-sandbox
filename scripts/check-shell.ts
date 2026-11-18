@@ -1,0 +1,38 @@
+import { execFileSync } from "node:child_process";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
+
+const root = join(import.meta.dirname, "..");
+// Include new scripts before staging, respect ignores, and omit deleted paths.
+const scripts = execFileSync(
+  "git",
+  [
+    "ls-files",
+    "--cached",
+    "--others",
+    "--exclude-standard",
+    "-z",
+    "--",
+    "*.sh",
+  ],
+  { cwd: root, encoding: "utf8" },
+)
+  .split("\0")
+  .filter((file) => file && existsSync(join(root, file)));
+if (scripts.length) {
+  const options = { cwd: root, stdio: "inherit" as const };
+  execFileSync(
+    "shfmt",
+    [
+      process.argv.includes("--write") ? "-w" : "-d",
+      "-i",
+      "2",
+      "-ci",
+      "--",
+      ...scripts,
+    ],
+    options,
+  );
+  execFileSync("shellcheck", ["--", ...scripts], options);
+}
+console.log(`Shell checks: ${scripts.length} scripts`);
