@@ -12,6 +12,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { setTimeout } from "node:timers/promises";
 import { parseArgs } from "node:util";
 import { quote, ROOT, run } from "./sandbox.ts";
 
@@ -24,8 +25,14 @@ const home = join(root, "home"),
 const binary = values.cli ?? process.execPath;
 const prefix = values.cli ? [] : [join(ROOT, "scripts", "sandbox.ts")];
 const names = new Set<string>();
+const attemptedNames = new Set<string>();
 const guestName = (suffix: string) => `ac-smoke-${process.pid}-${suffix}`;
 let coreStarted = false;
+function track(name: string): string {
+  names.add(name);
+  attemptedNames.add(name);
+  return name;
+}
 function invoke(args: string[], input?: string) {
   return execFileSync(binary, [...prefix, ...args], {
     cwd: work,
@@ -35,8 +42,7 @@ function invoke(args: string[], input?: string) {
   });
 }
 function launch(suffix: string, args: string[], input?: string) {
-  const name = guestName(suffix);
-  names.add(name);
+  const name = track(guestName(suffix));
   return invoke(["run", "--name", name, "--home", home, ...args], input);
 }
 function destroy(name: string) {
@@ -115,8 +121,7 @@ try {
     /a b; \$\(not-shell\)/,
   );
   destroy(guestName("literal"));
-  const failedName = guestName("exit");
-  names.add(failedName);
+  const failedName = track(guestName("exit"));
   const failed = spawnSync(
     binary,
     [
@@ -206,25 +211,29 @@ try {
   process.env.HC_SESSION = "smoke";
   process.env.XDG_CONFIG_HOME = join(coreHome, "config");
   process.env.XDG_STATE_HOME = join(coreHome, "state");
+  process.env.XDG_RUNTIME_DIR = join(coreHome, "run");
+  mkdirSync(process.env.XDG_RUNTIME_DIR, { mode: 0o700 });
   delete process.env.HC_SOCKET;
   delete process.env.HC_TERMINAL_ID;
   run("hc", ["server", "start"]);
   coreStarted = true;
+  const rejected = track(guestName("rejected"));
   const noninteractive = spawnSync(
     binary,
-    [...prefix, "run", "--name", `ac-smoke-${process.pid}-rejected`, "--herdr"],
+    [...prefix, "run", "--name", rejected, "--herdr"],
     { cwd: work, input: "must not be dropped\n", encoding: "utf8" },
   );
   assert.equal(noninteractive.status, 1);
   assert.match(noninteractive.stderr, /require a TTY/);
+  assert.doesNotMatch(invoke(["status"]), new RegExp(rejected));
+  names.delete(rejected);
   const registered = JSON.parse(run("hc", ["machine", "ls", "--json"]));
   assert.equal(
     registered.machines.length,
     0,
     "rejected noninteractive launch must not register a guest",
   );
-  const retained = `ac-smoke-${process.pid}-retained`;
-  names.add(retained);
+  const retained = track(guestName("retained"));
   assert.match(
     invoke([
       "run",
@@ -336,7 +345,14 @@ try {
     `${host}/${parent}`,
     "NATIVE_PARENT_REPORT_OK",
   ]);
-  assert.match(run("hc", ["read", parent]), /NATIVE_PARENT_REPORT_OK/);
+  const deadline = Date.now() + 10_000;
+  let response = "";
+  while (Date.now() < deadline) {
+    response = run("hc", ["read", parent]);
+    if (response.includes("RECEIVED NATIVE_PARENT_REPORT_OK")) break;
+    await setTimeout(100);
+  }
+  assert.match(response, /RECEIVED NATIVE_PARENT_REPORT_OK/);
   run("hc", ["kill", parent]);
   run("hc", ["rm", parent]);
   assert.equal(
@@ -456,8 +472,7 @@ try {
   invoke(["delete", "--name", retained]);
   names.delete(retained);
   process.env.HC_SESSION = "smoke";
-  const disposable = `ac-smoke-${process.pid}-rm`;
-  names.add(disposable);
+  const disposable = track(guestName("rm"));
   invoke([
     "run",
     "--name",
@@ -471,13 +486,13 @@ try {
   invoke(["stop", "--name", disposable]);
   names.delete(disposable);
   assert.doesNotMatch(invoke(["status"]), new RegExp(disposable));
-  for (const name of names) invoke(["delete", "--name", name]);
+  for (const name of names) destroy(name);
   const guests = JSON.parse(
     run("container", ["ls", "--all", "--format", "json"]),
   );
   assert.equal(
     guests.some((g: { configuration: { id: string } }) =>
-      names.has(g.configuration.id),
+      attemptedNames.has(g.configuration.id),
     ),
     false,
   );
@@ -499,7 +514,7 @@ try {
       run("container", ["ls", "--all", "--format", "json"]),
     );
     for (const guest of guests)
-      if (names.has(guest.configuration.id))
+      if (attemptedNames.has(guest.configuration.id))
         invoke(["delete", "--name", guest.configuration.id]);
   } finally {
     try {
