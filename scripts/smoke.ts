@@ -4,8 +4,10 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -51,6 +53,13 @@ function destroy(name: string) {
 }
 try {
   mkdirSync(join(home, ".codex", "skills"), { recursive: true });
+  const codex = join(home, ".codex");
+  writeFileSync(join(codex, "auth.json"), '{"fixture":"initial"}\n');
+  writeFileSync(join(codex, "config.toml"), "# private host config\n");
+  writeFileSync(join(codex, "history.jsonl"), "private host history\n");
+  writeFileSync(join(codex, "unknown-state.json"), "private extra state\n");
+  mkdirSync(join(codex, "sessions"));
+  writeFileSync(join(codex, "sessions", "private.jsonl"), "private session\n");
   mkdirSync(join(home, ".agents", "skills", "example"), { recursive: true });
   const skill = join(home, ".agents", "skills", "example", "SKILL.md");
   writeFileSync(skill, "# Smoke skill\n");
@@ -159,7 +168,10 @@ try {
       "-e",
       stateProbe,
     ]);
-    assert.equal(readFileSync(join(guestHome, "agent-state"), "utf8"), agent);
+    if (agent === "codex")
+      assert.equal(existsSync(join(guestHome, "agent-state")), false);
+    else
+      assert.equal(readFileSync(join(guestHome, "agent-state"), "utf8"), agent);
     destroy(guestName(agent));
     assert.ok(
       launch(`${agent}-version`, [
@@ -172,6 +184,73 @@ try {
     );
     destroy(guestName(`${agent}-version`));
   }
+  const authGuest = guestName("codex-auth");
+  const authProbe = `
+    const fs=require('node:fs'), assert=require('node:assert/strict');
+    const home=${JSON.stringify(codex)}, auth=home+'/auth.json';
+    assert.equal(fs.lstatSync(auth).isSymbolicLink(),false);
+    assert.equal(JSON.parse(fs.readFileSync(auth)).fixture,'initial');
+    assert.equal(fs.existsSync('/run/virtiofs'),false);
+    for(const name of ['config.toml','history.jsonl','unknown-state.json','sessions','skills']) {
+      assert.equal(fs.existsSync(home+'/'+name),false,name);
+    }
+    assert.throws(()=>fs.writeFileSync(auth,'must not reach host'),e=>['EROFS','EACCES'].includes(e.code));
+    const next=home+'/.auth-smoke'; fs.writeFileSync(next,'guest replacement');
+    assert.throws(()=>fs.renameSync(next,auth),e=>['EBUSY','EROFS','EACCES'].includes(e.code));
+    fs.unlinkSync(next);
+    for(const name of ['config.toml','history.jsonl','auth.lock','auth.json.lock']) fs.writeFileSync(home+'/'+name,'guest only');
+    fs.mkdirSync(home+'/sessions'); fs.writeFileSync(home+'/sessions/local','guest session');
+    console.log('read-only auth and guest-local state verified');
+  `;
+  assert.match(
+    launch("codex-auth", [
+      "--mount",
+      "codex",
+      "--exec",
+      "node",
+      "-e",
+      authProbe,
+    ]),
+    /read-only auth and guest-local state verified/,
+  );
+  assert.equal(
+    JSON.parse(readFileSync(join(codex, "auth.json"), "utf8")).fixture,
+    "initial",
+  );
+  for (const name of ["auth.lock", "auth.json.lock"])
+    assert.equal(existsSync(join(codex, name)), false);
+  assert.equal(
+    readFileSync(join(codex, "history.jsonl"), "utf8"),
+    "private host history\n",
+  );
+  assert.deepEqual(readdirSync(join(codex, "sessions")), ["private.jsonl"]);
+  writeFileSync(join(codex, ".host-config-smoke"), "updated private config\n");
+  renameSync(join(codex, ".host-config-smoke"), join(codex, "config.toml"));
+  writeFileSync(join(codex, "new-private-state.json"), "host only");
+  run("container", [
+    "exec",
+    authGuest,
+    "node",
+    "-e",
+    `const fs=require('node:fs'),a=require('node:assert/strict'),home=${JSON.stringify(codex)};a.equal(fs.readFileSync(home+'/config.toml','utf8'),'guest only');a.equal(fs.existsSync(home+'/new-private-state.json'),false);`,
+  ]);
+  writeFileSync(
+    join(codex, ".auth-host-smoke"),
+    '{"fixture":"host-refreshed"}\n',
+  );
+  renameSync(join(codex, ".auth-host-smoke"), join(codex, "auth.json"));
+  // Reattach the file mount after host atomic replacement, retaining local state.
+  invoke(["stop", "--name", authGuest]);
+  invoke([
+    "start",
+    "--name",
+    authGuest,
+    "--exec",
+    "node",
+    "-e",
+    `const fs=require('node:fs'),a=require('node:assert/strict'),home=${JSON.stringify(codex)};a.equal(JSON.parse(fs.readFileSync(home+'/auth.json')).fixture,'host-refreshed');a.equal(fs.readFileSync(home+'/history.jsonl','utf8'),'guest only');a.deepEqual(fs.readdirSync(home+'/sessions'),['local']);a.equal(fs.existsSync(home+'/new-private-state.json'),false);a.throws(()=>fs.writeFileSync(home+'/auth.json','blocked'),e=>['EROFS','EACCES'].includes(e.code));`,
+  ]);
+  destroy(authGuest);
   const privateState = [
     join(home, ".codex"),
     join(home, ".claude"),

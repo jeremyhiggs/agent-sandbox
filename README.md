@@ -250,10 +250,27 @@ Stopping it through Apple's CLI bypasses the wrapper's registration cleanup.
 
 ## Shared files and authentication
 
+### Authentication limitations
+
+Selecting an agent launches its CLI; it does not transfer your host login.
+No host credentials or provider environment variables are forwarded by default.
+
+| Agent       | Host authentication reuse                                                                                                                                                                             | What to do in the guest                                                                             |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Codex       | `--mount codex` mounts only `auth.json` read-only into the container. Guest token refresh cannot save credentials; see recovery below.                                                                | Use the mounted login with its refresh limitation, or sign in in a sandbox without `--mount codex`. |
+| Claude Code | A macOS Keychain login is not transferred by `--mount claude`. A file-backed credential may be present in the mounted directory, but authenticated model requests and refresh have not been verified. | Run Claude's login flow inside the guest.                                                           |
+| OpenCode    | Host provider authentication is not transferred automatically. `--mount opencode` shares state directories, but cross-platform provider login and refresh have not been verified.                     | Use `/connect` or `opencode auth login` inside the guest.                                           |
+
+CLI version checks, browser checks, and fake-state mount tests do not establish
+authenticated access to a provider or subscription. Guest-local logins persist
+across stop/start and are lost when the sandbox is deleted.
+
+### Available mounts
+
 | Host content                                                               | Access                                      | Opt-in                         |
 | -------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------ |
 | Selected checkout/worktree and its required Git metadata                   | Read/write, same paths                      | `--git [PATH]`                 |
-| `~/.codex`                                                                 | Read/write, same path                       | `--mount codex`                |
+| `~/.codex/auth.json`                                                       | Read-only file mount, same path             | `--mount codex`                |
 | `~/.claude`                                                                | Read/write, same path                       | `--mount claude`               |
 | `~/.claude.json`                                                           | Initial guest-local copy; no writeback      | `--mount claude`, when present |
 | `~/.config/opencode`, `~/.local/share/opencode`, `~/.local/state/opencode` | Read/write existing directories, same paths | `--mount opencode`             |
@@ -268,9 +285,9 @@ agent-sandbox run --name ac-feature --agent codex --mount codex --mount claude -
 
 No checkout, worktree, Git metadata, agent state, or shared skills are mounted
 by default. Requested state profiles must
-have an existing directory under the selected `--home`. Each mounted directory
-is printed before creation. State mounts are writable, including refreshed
-credentials, settings, history, and the OpenCode database. Claude's home-level
+have existing state under the selected `--home`; Codex requires a regular `auth.json` file. Each mount
+is printed before creation. Claude and OpenCode state mounts are writable,
+including refreshed credentials, settings, history, and the OpenCode database. Claude's home-level
 `.claude.json` is copied once so guest-side atomic replacement works without
 sharing the host's home; guest changes to that file do not update the host.
 Existing guest ownership labels are retained across the command rename.
@@ -294,23 +311,68 @@ Ordinary checkouts and registered linked worktrees are supported; symlinked
 This does not share host Git configuration or credentials. No additional
 metadata stores are discovered through `.jj` links.
 
-With `--mount codex`, Codex uses your normal `.codex` directory. It starts with
-`--no-daemon --dangerously-bypass-approvals-and-sandbox` and
-`cli_auth_credentials_store="file"`. An existing `auth.json` and its updates
-persist. Keychain-only login does not follow a directory mount. To log in using
-file storage:
+### Codex read-only authentication
 
-```sh
-agent-sandbox shell --name codex-work --exec codex -c 'cli_auth_credentials_store="file"' login --device-auth
-```
+With `--mount codex`, the launcher passes only the existing host
+`~/.codex/auth.json` to Apple Container through `--volume`, read-only at the same
+path inside the guest. The host file stays in place. It must be a regular file,
+not a symlink. The rest of the guest `.codex` directory stays writable and local;
+host configuration, hooks, history, sessions, and databases are not mounted into
+the container process. Shared skills require `--mount skills`.
+
+**Runtime boundary:** Apple Container 1.7.1 implements a single-file mount by
+sharing its parent directory with the underlying VM and bind-mounting the file
+into the workload. The ordinary container process sees only the selected file;
+the VM itself has access to the parent directory. This is not an auth-only export
+at the VM boundary. See Apple's
+[single-file mount trade-offs](https://github.com/apple/containerization/blob/0.54.0/docs/single-file-mounts.md#trade-offs).
+
+**Refresh limitation:** the guest can read the login but cannot save refreshed
+credentials, replace the mounted file, or complete a login that writes to it.
+Codex saves credentials using a temporary sibling file and an atomic rename;
+a writable single-file mount would also reject that replacement. A host-side
+atomic replacement can leave a running mount stale or unreadable. Do not assume
+that host login changes appear in a running sandbox, or that a successful initial
+request proves future refresh will work.
+
+Read-only access protects the host file, not the login at the provider. Guest
+refresh or logout can affect the shared grant before a local credential write
+fails; the host may also need a fresh login afterward.
+
+If Codex reports a read-only credential file, `EBUSY`, a missing `auth.json`, or an
+authentication/refresh failure:
+
+1. Keep the sandbox and its work. If the host login needs renewal, sign in on the
+   host using file-backed storage:
+
+   ```sh
+   codex -c 'cli_auth_credentials_store="file"' login
+   ```
+
+2. Stop and start the sandbox to attach the current host auth file again:
+
+   ```sh
+   agent-sandbox stop --name codex-work
+   agent-sandbox start --name codex-work --agent codex
+   ```
+
+3. If the problem continues, create a sandbox without `--mount codex` and use
+   `codex login --device-auth` inside it. That guest has writable, independent
+   credentials. Keep or export the old sandbox's work before deleting it.
+
+Managed Codex starts with
+`--no-daemon --dangerously-bypass-approvals-and-sandbox` and
+`cli_auth_credentials_store="file"`. Keychain-only host login is not transferred.
+Guest-local credentials persist across stop/start and are lost on deletion.
 
 Managed Codex launches keep SQLite databases in the guest at
 `/var/lib/agent-sandbox/codex` using `sqlite_home`. They persist across stop/start
 and disappear on deletion. These databases include goals and memory-processing
 state, as well as conversation indexes. Shared transcript files cannot restore
-all database state. With `--mount codex`, login, configuration, transcript, and
-generated memory files remain on the host. Host and guest conversation lists
-and memory processing are not fully synchronized.
+all database state. Only authentication is deliberately shared with the host;
+configuration, transcripts, and generated memories stay in the guest and are
+lost on deletion unless exported. Host and guest conversation lists and memory
+processing are separate.
 
 Several host Codex processes share one kernel's file locks and memory mappings.
 Apple containers use separate Linux kernels and expose host directories through
@@ -351,10 +413,14 @@ Before `delete`, or before stopping a sandbox created with `--rm`:
 Guest SQLite is expendable only after this handoff. A chat reply alone does not
 replace the durable record. The wrapper does not copy or merge databases,
 generate host Codex memories, or enforce this handoff in `delete`. The orchestrator
-must complete it. With no Codex mount, transcript and memory files are guest-local
-too and disappear on deletion unless exported.
+must complete it. Transcript and memory files are guest-local even with the
+Codex auth mount and disappear on deletion unless exported.
 
 ### Other agent state
+
+Claude and OpenCode host-login transfer is not an established supported workflow.
+The state-mount options expose files; they do not export Keychain credentials,
+forward provider environment variables, or guarantee working authentication.
 
 Claude reads file-backed Linux credentials from `~/.claude/.credentials.json`.
 A macOS Keychain login is not exported by mounting that directory; use Claude's
@@ -369,19 +435,16 @@ permission prompts. Agent state directories must be real directories with no
 symlinked ancestors. Links inside writable agent state never add host mounts;
 Codex skill links into `~/.agents/skills` need `--mount skills` too.
 
-Normal Codex configuration and skills can reference macOS tools, MCP servers, or
-host-only paths. Those require Linux equivalents. Concurrent Codex host/guest
-processes share a writable login cache; avoid simultaneous login/logout actions.
-Skills inside `.codex` are writable unless a read-only shared skills mount covers
-them. Shared skills are available as files; discovery rules vary by agent.
+Shared skills can reference macOS tools, MCP servers, or host-only paths. Those
+require Linux equivalents; host Codex configuration is not loaded. The guest cannot update the mounted host login cache.
+Host skills are unavailable unless explicitly exposed through `--mount skills`. Shared skills are read-only files; discovery rules vary by agent.
 
 `.codex` itself must be a real directory. Skill links must point directly to
 canonical targets; chained links are rejected. Direct links in the host skills
 directory approve additional skill roots. Nested links must stay inside those
 roots and never add host mounts. Skills directories with symlinked ancestors
-are rejected. Linked `auth.json` and
-`config.toml` must stay inside the checkout or Codex directory so atomic file
-replacement persists. Mounts that expose the whole host home are rejected.
+are rejected. Codex credential-file symlinks and overlapping checkout/auth mounts
+are rejected. Mounts that expose the whole host home are rejected.
 
 ## Repository mise configuration
 
@@ -429,7 +492,7 @@ session stays unchanged, and deletes the test sandbox. It uses no agent login.
 
 Run `mise run smoke:codex` for the full live Codex lifecycle. It requires an
 existing file-backed ChatGPT login, installed agent skills, open Herdr, host Git, hc, and
-the host `privacy-gate` command. It mounts your normal `.codex` and read-only
+the host `privacy-gate` command. It mounts your normal `auth.json` read-only and shared
 `.agents/skills`, verifies login and skill access, and sends an initial task to
 Codex in a throwaway linked worktree. The test independently checks the result,
 runs the host privacy gate, commits through the guest and asks Codex to verify

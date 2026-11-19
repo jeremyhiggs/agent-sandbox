@@ -7,6 +7,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -30,6 +31,50 @@ function fixture(fn: (root: string) => void) {
     rmSync(root, { recursive: true });
   }
 }
+
+test("Codex auth sharing mounts only the read-only credential file", () =>
+  fixture((root) => {
+    const codex = join(root, ".codex"),
+      bin = join(root, "bin"),
+      log = join(root, "container.jsonl");
+    mkdirSync(codex);
+    mkdirSync(bin);
+    writeFileSync(join(codex, "auth.json"), "{}\n");
+    writeFileSync(join(codex, "auth.json.lock"), "");
+    writeFileSync(join(codex, "config.toml"), "# host only\n");
+    writeFileSync(join(codex, "history.jsonl"), "private history\n");
+    mkdirSync(join(codex, "sessions"));
+    writeFileSync(
+      join(bin, "container"),
+      `#!/usr/bin/env node\nrequire('node:fs').appendFileSync(${JSON.stringify(log)},JSON.stringify(process.argv.slice(2))+'\\n');\n`,
+      { mode: 0o755 },
+    );
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try {
+      createSandbox({
+        name: "auth-file",
+        home: root,
+        mount: ["codex"],
+        herdr: false,
+      });
+    } finally {
+      process.env.PATH = path;
+    }
+    const calls: string[][] = readFileSync(log, "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    const launch = calls.find((args) => args[0] === "run")!;
+    const auth = join(codex, "auth.json");
+    const volumes = launch.flatMap((arg, index) =>
+      arg === "--volume" ? [launch[index + 1]] : [],
+    );
+    assert.deepEqual(volumes, [`${auth}:${auth}:ro`]);
+    assert.ok(launch.includes(`CODEX_HOME=${codex}`));
+    assert.ok(!launch.includes("--masked-path"));
+    assert.ok(!calls.some((args) => args.includes("ln")));
+  }));
 
 test("linked worktree mounts checkout and common Git directory without main checkout", () =>
   fixture((root) => {
@@ -139,6 +184,7 @@ test("agent skills remain read-only when Codex skills link to the same directory
       skills = join(root, ".agents", "skills");
     mkdirSync(work);
     mkdirSync(join(root, ".codex"));
+    writeFileSync(join(root, ".codex", "auth.json"), "{}\n");
     mkdirSync(skills, { recursive: true });
     symlinkSync(skills, join(root, ".codex", "skills"));
     assert.equal(mountPlan(work, root, ["codex", "skills"]).get(skills), true);
@@ -151,12 +197,19 @@ test("read-only skill aliases into Codex keep a read-only overlay", () =>
       skills = join(root, ".agents", "skills");
     mkdirSync(work);
     mkdirSync(target, { recursive: true });
+    writeFileSync(join(root, ".codex", "auth.json"), "{}\n");
     mkdirSync(skills, { recursive: true });
     symlinkSync(target, join(skills, "example"));
     assert.equal(mountPlan(work, root, ["codex", "skills"]).get(target), true);
+    unlinkSync(join(skills, "example"));
+    symlinkSync(join(root, ".codex"), join(skills, "example"));
+    assert.throws(
+      () => mountPlan(work, root, ["codex", "skills"]),
+      /Codex directory cannot also be a shared skill root/,
+    );
   }));
 
-test("external writable state file links require a shared parent for atomic updates", () =>
+test("Codex auth must be an existing regular file", () =>
   fixture((root) => {
     const work = join(root, "work"),
       codex = join(root, ".codex"),
@@ -164,15 +217,54 @@ test("external writable state file links require a shared parent for atomic upda
     mkdirSync(work);
     mkdirSync(codex);
     mkdirSync(other);
-    for (const name of ["config.toml", "auth.json"]) {
+    assert.throws(
+      () => mountPlan(work, root, ["codex"]),
+      /existing regular file/,
+    );
+    for (const name of ["auth.json"]) {
       const target = join(other, name);
       writeFileSync(target, "fixture");
       symlinkSync(target, join(codex, name));
+      assert.throws(
+        () => mountPlan(work, root, ["codex"]),
+        /must be an existing regular file/,
+      );
+      unlinkSync(join(codex, name));
     }
-    assert.throws(() => mountPlan(work, root, ["codex"]), /atomic updates/);
   }));
 
-test("a symlinked Codex home is rejected before creating writable aliases", () =>
+test("Git sharing cannot also expose host Codex state", () =>
+  fixture((root) => {
+    mkdirSync(join(root, ".codex"));
+    assert.throws(
+      () => mountPlan(root, root, ["codex"]),
+      /Git sharing cannot also expose/,
+    );
+    mkdirSync(join(root, ".codex", "repo"));
+    assert.throws(
+      () => mountPlan(join(root, ".codex", "repo"), root, ["codex"]),
+      /Git sharing cannot also expose/,
+    );
+    const main = join(root, ".codex", "repo"),
+      work = join(root, "work");
+    execFileSync("git", ["init", "-q", main]);
+    execFileSync("git", [
+      "-C",
+      main,
+      "worktree",
+      "add",
+      "--orphan",
+      "-qb",
+      "auth-file",
+      work,
+    ]);
+    assert.throws(
+      () => mountPlan(work, root, ["codex"]),
+      /Git sharing cannot also expose/,
+    );
+  }));
+
+test("a symlinked Codex home is rejected before mounting credentials", () =>
   fixture((root) => {
     const work = join(root, "work"),
       target = join(root, "state", "codex");
@@ -280,6 +372,7 @@ test("skill symlink cannot expose host home", () =>
     const skills = join(root, ".agents", "skills");
     mkdirSync(skills, { recursive: true });
     mkdirSync(join(root, ".codex"));
+    writeFileSync(join(root, ".codex", "auth.json"), "{}\n");
     mkdirSync(join(root, "project"));
     symlinkSync(root, join(skills, "unsafe"));
     assert.throws(
@@ -293,13 +386,14 @@ test("unrelated dangling Codex cache symlinks do not block the mount plan", () =
     const work = join(root, "project");
     mkdirSync(work);
     mkdirSync(join(root, ".codex", ".tmp"), { recursive: true });
+    writeFileSync(join(root, ".codex", "auth.json"), "{}\n");
     symlinkSync(
       join(root, "missing-cache-file"),
       join(root, ".codex", ".tmp", "old"),
     );
     assert.deepEqual(
       new Set(mountPlan(work, root, ["codex"]).keys()),
-      new Set([work, join(root, ".codex")]),
+      new Set([work, join(root, ".codex", "auth.json")]),
     );
   }));
 
@@ -518,14 +612,13 @@ test("host state and skills are opt-in independently of agent selection", () =>
     for (const path of [work, codex, claude, config, data, skills])
       mkdirSync(path, { recursive: true });
     symlinkSync(skills, join(codex, "skills"));
-    assert.deepEqual(
-      [...mountPlan(undefined, root, ["codex"]).keys()],
-      [codex],
-    );
+    const auth = join(codex, "auth.json");
+    writeFileSync(auth, "{}\n");
+    assert.deepEqual([...mountPlan(undefined, root, ["codex"]).keys()], [auth]);
     assert.deepEqual([...mountPlan(work, root).keys()], [work]);
     assert.deepEqual(
       new Set(mountPlan(work, root, ["codex"]).keys()),
-      new Set([work, codex]),
+      new Set([work, auth]),
     );
     const selected = mountPlan(work, root, [
       "codex",
@@ -535,7 +628,7 @@ test("host state and skills are opt-in independently of agent selection", () =>
     ]);
     assert.deepEqual(
       new Set(selected.keys()),
-      new Set([work, codex, claude, config, data, skills]),
+      new Set([work, auth, claude, config, data, skills]),
     );
     assert.equal(selected.get(skills), true);
     assert.deepEqual(

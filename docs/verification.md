@@ -83,8 +83,15 @@ worktree, and scratch hc configuration in a separate core session. It verifies:
   removal on sandbox stop when created with `--rm`.
 - Exclusion of host agent state and skills by default, plus individual and
   combined opt-in mounts.
-- Writable Codex, Claude, and OpenCode state directories, read-only shared
-  skills, and a guest-local Claude config copy without host writeback.
+- A read-only Codex `auth.json` file mount: guest writes and guest-side atomic
+  replacement are rejected; host configuration/history/sessions remain hidden
+  from the workload, while guest state stays writable and local. Stop/start
+  reattaches an atomically replaced host auth file and retains guest state.
+  Apple still exports the parent directory to its VM internally. Fake-credential
+  tests do not establish working OAuth refresh, which cannot save through this
+  mount; use the recovery steps in the README.
+- Writable Claude and OpenCode state directories, read-only shared skills,
+  and a guest-local Claude config copy without host writeback.
 - Host-file exclusion and rejection of symlinks that would widen mount access.
 - Independent guest hc state, selected host-core registration, restoration after
   restart, and cleanup after the caller changes its hc session.
@@ -104,8 +111,18 @@ The CLI and Herdr app smoke tests exercise file sharing and process/session mana
 fake authentication state. They make no model requests and do not establish
 provider login or subscription acceptance.
 
-The separate, opt-in `smoke:codex` test uses the normal host Codex login and
-shared skills for a real model task. It checks the guest's ChatGPT login status,
+Claude Code and OpenCode have no completed authenticated model-task or token
+refresh acceptance test here. Their state mounts are not proof of login
+transfer. In particular, mounting Claude's directory does not export its macOS
+Keychain login. OpenCode v2 stores provider credentials in its server database;
+reusing that host database from the Linux guest remains unverified. Sign in
+inside the guest rather than assuming that a mounted directory transfers auth.
+
+The earlier completed, opt-in `smoke:codex` test used a writable whole-directory
+Codex mount and shared skills for a real model task. That historical result does
+not verify authenticated model requests with the current read-only auth mount.
+The current test uses the read-only file mount and can fail when login needs
+refresh; follow the README recovery steps. It checks the guest's ChatGPT login status,
 matching skill bytes and read-only access, and exclusion of an unshared host
 file. It verifies that Codex created its runtime database in guest-local storage.
 It independently tests Codex's changes, runs the host privacy gate, commits

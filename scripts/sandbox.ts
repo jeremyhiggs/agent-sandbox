@@ -28,6 +28,7 @@ export const MOUNTS = ["codex", "claude", "opencode", "skills"] as const;
 export type HostMount = (typeof MOUNTS)[number];
 export const DEFAULT_DNS = process.env.CONTAINER_DNS ?? "1.1.1.1";
 export const CODEX_SQLITE_HOME = "/var/lib/agent-sandbox/codex";
+const CODEX_AUTH_FILE = "auth.json";
 const LABEL = "dev.agent-container.managed";
 const LEGACY_LABEL = "dev.codex-sandbox.managed";
 const HERDR_LABEL = "dev.agent-container.herdr";
@@ -186,22 +187,20 @@ export function mountPlan(
       throw new Error(
         `Codex directory cannot be a symlink in this initial version: ${codex}`,
       );
-    mounts.set(codex, false);
-    for (const name of ["config.toml", "auth.json"]) {
-      const path = join(codex, name);
-      if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
-        const target = directSymlinkTarget(path);
-        if (
-          ![codex, ...(checkout ? [checkout] : [])].some((root) =>
-            inside(target, root),
-          )
-        ) {
-          throw new Error(
-            `${name} requires a shared directory for atomic updates; its symlink target is outside the checkout and Codex directory`,
-          );
-        }
-      }
-    }
+    if (
+      [...mounts.keys()].some(
+        (path) => inside(codex, path) || inside(path, codex),
+      )
+    )
+      throw new Error(
+        "Git sharing cannot also expose the host Codex directory",
+      );
+    const auth = join(codex, CODEX_AUTH_FILE);
+    if (!lstatSync(auth, { throwIfNoEntry: false })?.isFile())
+      throw new Error(
+        `Codex ${CODEX_AUTH_FILE} must be an existing regular file: ${auth}. Sign in on the host with file-backed credentials first.`,
+      );
+    mounts.set(auth, true);
   }
   for (const profile of ["claude", "opencode"] as const) {
     if (!selected.includes(profile)) continue;
@@ -237,6 +236,10 @@ export function mountPlan(
     for (const path of withSymlinkTargets([skills], home))
       mounts.set(path, true);
   }
+  if (selected.includes("codex") && mounts.get(join(home, ".codex")))
+    throw new Error(
+      "The host Codex directory cannot also be a shared skill root",
+    );
   const plan = new Map<string, boolean>();
   for (let [path, readonly] of [...mounts.entries()].sort(
     ([a], [b]) => a.length - b.length,
@@ -391,6 +394,8 @@ export function createSandbox(options: Options): string {
   const workdir = checkout ?? "/workspace";
   const home = realpathSync(options.home ?? homedir());
   const mounts = mountPlan(checkout, home, options.mount);
+  const codex = join(home, ".codex");
+  const sharedCodex = options.mount?.includes("codex");
   const claudeConfig = join(home, ".claude.json");
   if (
     options.mount?.includes("claude") &&
@@ -442,13 +447,18 @@ export function createSandbox(options: Options): string {
   for (const [key, value] of Object.entries(labels))
     args.push("--label", `${key}=${value}`);
   if (options.rm) args.push("--rm");
-  args.push("--env", `CODEX_HOME=${join(home, ".codex")}`);
+  args.push("--env", `CODEX_HOME=${codex}`);
   console.error(`Starting ${name}; host mounts:`);
   for (const [path, readonly] of mounts) {
     if (/[:,\n]/.test(path))
       throw new Error(`Unsupported mount path delimiter: ${path}`);
     args.push("--volume", `${path}:${path}${readonly ? ":ro" : ""}`);
     console.error(`  ${readonly ? "ro" : "rw"} ${path}`);
+  }
+  if (sharedCodex) {
+    console.error(
+      "  Codex auth is read-only: refresh/login cannot save credentials. If auth fails, sign in on the host and stop/start this sandbox, or use a sandbox without --mount codex for guest-local login. See README authentication limitations.",
+    );
   }
   run(container, [
     ...args,
@@ -464,8 +474,8 @@ export function createSandbox(options: Options): string {
       workdir,
       CODEX_SQLITE_HOME,
     ]);
-    if (options.agent === "codex")
-      run(container, ["exec", name, "mkdir", "-p", join(home, ".codex")]);
+    if (options.agent === "codex" || sharedCodex)
+      run(container, ["exec", name, "mkdir", "-p", codex]);
     if (checkout)
       run(container, [
         "exec",

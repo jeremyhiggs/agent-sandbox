@@ -49,8 +49,11 @@ Nothing is mounted by default. Recommend only the mounts needed for the task:
   Git metadata is included so staging and commits work. Linked worktrees share
   their common Git store, including refs. Sibling working-tree paths are excluded,
   but repository history and committed files on other branches remain accessible.
-- `--mount codex`, `--mount claude`, and `--mount opencode` opt into existing
-  file-backed login and settings. Keychain-only credentials require guest login.
+- State mounts do not guarantee host-login transfer. Claude's macOS Keychain
+  credentials are not exported; OpenCode provider authentication and refresh
+  through host state mounts are unverified. Sign in inside the guest.
+- `--mount codex` mounts host `auth.json` read-only. Refresh cannot save
+  credentials; renew the host login and stop/start the sandbox if auth fails.
 - `--mount skills` shares agent skills read-only. Existing settings and skills
   can reference host-only programs that need Linux equivalents.
 
@@ -62,14 +65,34 @@ sandbox without mounting their host state.
 
 Foreground `--exec` uses ordinary stdin/stdout without creating an hc terminal.
 
-Managed Codex uses file-backed auth and bypasses its inner sandbox/approvals;
-the VM and selected mounts define the host-file boundary. Its SQLite databases
-stay guest-local, including goals and memory-processing state. Deletion loses
-that state. Selected login, config, transcript, and memory files remain shared;
-they do not provide a unified host/guest database. Host Git identity, signing
-agents, SSH keys, and hc sockets are not mounted.
+Managed Codex uses file-backed auth and bypasses its inner sandbox/approvals.
+`--mount codex` passes only the regular host `.codex/auth.json` file through
+Apple Container's `--volume`, read-only at the same guest path. The guest's
+configuration, history, sessions, memories, locks and SQLite remain local.
+Shared skills require `--mount skills`. Apple implements the file mount by
+sharing its parent directory with the VM, then exposing only the file to the
+container process; this is not an auth-only export at the VM boundary.
+
+The mounted login cannot save refreshed credentials or be replaced by guest
+login. Host atomic replacement can make the running mount stale or unreadable.
+Read-only mounting does not prevent provider-side refresh or revocation; a guest
+refresh or logout can also leave the host needing a fresh login.
+For read-only credential, `EBUSY`, missing-auth, or refresh errors, keep the work,
+renew file-backed login on the host if needed, then use `agent-sandbox stop`
+and `agent-sandbox start` to reattach the file. If errors continue, create a
+sandbox without `--mount codex` and run `codex login --device-auth` inside it.
+Export the old sandbox's work before deletion. Never remove or overwrite the
+host auth file as a recovery step. Host Git identity, signing agents, SSH keys,
+and hc sockets are not mounted.
 
 ## Progress and lifecycle
+
+For agent work, prefer launching with `--agent codex --prompt 'TASK'`. Put the
+task, constraints, host return address, and handoff requirements in that initial
+prompt, then communicate with the running guest agent through `hc send` and
+collect its reports through hc. Let the guest agent run the repository workflow.
+Reserve host-issued commands for setup, lifecycle checks, and independent
+verification; do not replace the worker with a host-side command runner.
 
 Discover guest terminal IDs, reconnect to one, or create another shell:
 
