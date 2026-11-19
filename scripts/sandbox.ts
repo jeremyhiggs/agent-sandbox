@@ -457,7 +457,7 @@ export function createSandbox(options: Options): string {
   }
   if (sharedCodex) {
     console.error(
-      "  Codex auth is read-only: refresh/login cannot save credentials. If auth fails, sign in on the host and stop/start this sandbox, or use a sandbox without --mount codex for guest-local login. See README authentication limitations.",
+      "  Codex auth is read-only: refresh/login cannot save credentials. If auth fails, renew host login and restart a persistent sandbox. With --rm, export work and save a verified handoff before stopping, then recreate it: stopping deletes guest files. Or use a sandbox without --mount codex for guest-local login. See README authentication limitations.",
     );
   }
   run(container, [
@@ -933,7 +933,7 @@ build / scan                  Build or scan images
 Creation: --home PATH --image TAG --dns IP --cpus N --memory 4G
 No checkout is shared by default; the guest starts in its own /workspace.
 Build/scan: --engine container|docker --profile base|codex|opencode|claude
-Foreground is the default. In Codex, use a PTY background terminal to keep the launcher visible.
+Foreground is the default. For hc supervision, launch directly from its host terminal with --detach --prompt.
 Exiting or detaching any terminal leaves its sandbox running. Bare invocation prints help.
 Agent? Run: agent-sandbox --skill
 Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`);

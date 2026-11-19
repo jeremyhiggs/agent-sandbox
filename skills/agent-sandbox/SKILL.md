@@ -14,12 +14,15 @@ not need another sandbox inside it. Use `agent-sandbox --help` for flags.
 
 ## Recommended launches
 
-Prefer the normal foreground command. In Codex, run it in a PTY with
-`tty: true` and a short `yield_time_ms`, such as 1000. Retain the returned
-session ID so Codex shows a running background terminal and can read or send
-input with `write_stdin`. Do not add `--detach` merely to avoid blocking a tool
-call. Use `--detach` when the caller deliberately needs the launcher to return
-immediately, such as a headless script.
+Launch directly from the supervising host hc terminal. Do not create another
+host hc terminal merely to keep the launcher running: that terminal becomes
+the guest's parent, and the guest cannot send replies to the intended supervisor.
+
+For an agent supervised through hc messages, use `--detach --agent codex
+--prompt 'TASK'` so the launcher returns while the guest remains visible in
+Herdr. For an attached interactive session, keep the normal foreground command.
+In Codex, run that foreground command in a PTY with `tty: true` and a short
+`yield_time_ms`, such as 1000. Retain the returned session ID for `write_stdin`.
 
 Choose a name and inspect `agent-sandbox status` before creating a sandbox.
 Reuse an appropriate running sandbox with `shell`, or restart a stopped one
@@ -30,7 +33,7 @@ with `start`. An existing sandbox's mounts and image are fixed at creation.
 agent-sandbox run --name work
 
 # Work on the selected checkout using existing Codex login and skills
-agent-sandbox run --name feature --agent codex --git --mount codex --mount skills --herdr --prompt 'Implement the requested change and run its tests'
+agent-sandbox run --name feature --detach --agent codex --git --mount codex --mount skills --herdr --prompt 'Implement the requested change and run its tests; report to the host hc parent'
 
 # Another command in that running sandbox
 agent-sandbox shell --name feature --exec node --test
@@ -53,7 +56,7 @@ Nothing is mounted by default. Recommend only the mounts needed for the task:
   credentials are not exported; OpenCode provider authentication and refresh
   through host state mounts are unverified. Sign in inside the guest.
 - `--mount codex` mounts host `auth.json` read-only. Refresh cannot save
-  credentials; renew the host login and stop/start the sandbox if auth fails.
+  credentials; follow the recovery steps below if auth fails.
 - `--mount skills` shares agent skills read-only. Existing settings and skills
   can reference host-only programs that need Linux equivalents.
 
@@ -77,13 +80,16 @@ The mounted login cannot save refreshed credentials or be replaced by guest
 login. Host atomic replacement can make the running mount stale or unreadable.
 Read-only mounting does not prevent provider-side refresh or revocation; a guest
 refresh or logout can also leave the host needing a fresh login.
-For read-only credential, `EBUSY`, missing-auth, or refresh errors, keep the work,
-renew file-backed login on the host if needed, then use `agent-sandbox stop`
-and `agent-sandbox start` to reattach the file. If errors continue, create a
-sandbox without `--mount codex` and run `codex login --device-auth` inside it.
-Export the old sandbox's work before deletion. Never remove or overwrite the
-host auth file as a recovery step. Host Git identity, signing agents, SSH keys,
-and hc sockets are not mounted.
+For read-only credential, `EBUSY`, missing-auth, or refresh errors, keep the work
+and renew file-backed login on the host if needed. For a persistent sandbox
+created without `--rm`, use `agent-sandbox stop` and `agent-sandbox start` to
+reattach the file. If it was created with `--rm`, export guest-local work and
+save a verified handoff outside the sandbox before stopping: stopping deletes
+its guest filesystem. Recreate it with renewed credentials instead of using
+`start`. If errors continue, create a sandbox without `--mount codex` and run
+`codex login --device-auth` inside it. Export the old sandbox's work before
+deletion. Never remove or overwrite the host auth file as a recovery step.
+Host Git identity, signing agents, SSH keys, and hc sockets are not mounted.
 
 ## Progress and lifecycle
 
@@ -93,6 +99,25 @@ prompt, then communicate with the running guest agent through `hc send` and
 collect its reports through hc. Let the guest agent run the repository workflow.
 Reserve host-issued commands for setup, lifecycle checks, and independent
 verification; do not replace the worker with a host-side command runner.
+
+Confirm the registered parent and receive an initial hc reply before starting
+expensive work. Discover the parent from guest hc metadata and use its full
+machine-qualified address. Use `--herdr` at creation; later `shell` and `start`
+commands reuse the sandbox's saved integration settings.
+
+Keep acceptance work bounded. Start with a small cold build and focused tests,
+with an explicit CPU/memory budget and stop condition. A test-name filter can
+still compile the entire repository; scope compiler inputs too when needed.
+Do not automatically increase resources or broaden the suite after an OOM.
+Report the failure and choose a smaller workload within the authorized scope.
+
+Keep downloaded tools, logs and reports outside the source checkout so formatters
+and linters do not discover them. Use guest-local scratch storage for tools and
+export the handoff to a separate host artifact directory before teardown.
+
+Keep normal host permission checks. Identify the exact lifecycle commands needed
+before the run so the user can approve narrowly scoped rules if desired. Never
+answer host approval dialogs through hc or use `hc send --force` to bypass them.
 
 Discover guest terminal IDs, reconnect to one, or create another shell:
 
@@ -139,3 +164,7 @@ when handing control back to the user.
 Follow the checkout's instructions and authorization boundaries for commits,
 pushes, and other external actions. The host orchestrator can run host-only
 checks against the shared worktree before committing through the guest.
+Excluding host GitHub credentials does not enforce approval before `git push`.
+The guest has network access and could publish if it obtains credentials. Keep
+publication on the host when approval is required; this is an operating policy,
+not a technical push block.

@@ -240,6 +240,29 @@ parent. Inside the guest, `hc get "$HC_TERMINAL_ID" --json` shows its parent;
 reply with `hc send <parent> 'Task complete'`. Keep the machine prefix in the
 parent address: a bare terminal ID identifies a terminal in the guest.
 
+For host-supervised agent work, launch directly from the supervising hc terminal
+with an initial prompt, then exchange tasks and reports through hc:
+
+```sh
+agent-sandbox run --name worker --detach --agent codex --git --mount codex --herdr --prompt 'Inspect the checkout, confirm your hc parent, and report readiness to it before starting the assigned task'
+agent-sandbox terminals --name worker
+hc send worker/TERMINAL_ID 'Run the agreed focused checks and report the results'
+```
+
+Replace `TERMINAL_ID` with the discovered guest terminal ID. `--detach` returns
+the launcher while the guest agent remains visible in Herdr. Avoid launching
+through an extra host hc terminal: it becomes the guest's parent and changes
+which supervisor the guest can reach. Confirm the parent route and initial reply
+before expensive work. Later `shell` and `start` commands reuse the saved Herdr
+settings; `--herdr` is a creation option.
+
+Start acceptance with a small cold build and focused tests under an explicit
+resource budget. A test-name filter alone may still compile the full repository.
+Keep downloaded tools and reports outside the checkout to avoid lint discovery,
+and save the durable handoff outside the guest before teardown. Host permission
+checks remain enabled; narrowly scoped lifecycle approvals can reduce repeated
+prompts without granting the host agent unrestricted execution.
+
 Transport uses `hc machine add --via 'container exec -i … sh -c'`. No SSH server,
 host socket mount, or host core configuration is shared with the guest. A short
 guest-local hc socket avoids Unix socket path limits. `stop` removes host
@@ -303,6 +326,11 @@ Configure a guest Git identity if it needs to commit. `gh` is installed without
 mounting host GitHub credentials; authenticate inside the guest if needed. Image builds never include
 checkout contents, user configuration, or credentials.
 
+Credential exclusion is not an enforced push-approval mechanism. The guest has
+network access and can publish if it obtains credentials. When publication needs
+manual approval, keep it on the host and do not provision publishing credentials
+in the guest; this remains an operating policy rather than a technical block.
+
 With `--git [PATH]`, Git metadata inside the selected checkout stays visible.
 For linked worktrees, the validated common Git store is shared automatically
 so status, staging, and commits work. A path inside a checkout selects its root.
@@ -349,7 +377,13 @@ authentication/refresh failure:
    codex -c 'cli_auth_credentials_store="file"' login
    ```
 
-2. Stop and start the sandbox to attach the current host auth file again:
+2. Check whether the sandbox was created with `--rm` before stopping it. For
+   `--rm`, first export guest-local work and save a verified handoff outside the
+   sandbox. Stopping deletes its guest filesystem; recreate it with the renewed
+   host auth file instead of using `start`.
+
+   For a persistent sandbox created without `--rm`, stop and start it to attach
+   the current host auth file again:
 
    ```sh
    agent-sandbox stop --name codex-work
