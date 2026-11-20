@@ -15,7 +15,15 @@ import {
   statSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { basename, delimiter, dirname, join, resolve, sep } from "node:path";
+import {
+  basename,
+  delimiter,
+  dirname,
+  join,
+  posix,
+  resolve,
+  sep,
+} from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { buildOS } from "./build-os.ts";
@@ -24,8 +32,6 @@ import { checkVulnerabilities } from "./vulnerabilities.ts";
 export const ROOT = resolve(import.meta.dirname, "..");
 export const PROFILES = ["base", "codex", "opencode", "claude"] as const;
 export type Agent = "codex" | "opencode" | "claude";
-export const MOUNTS = ["codex", "claude", "opencode", "skills"] as const;
-export type HostMount = (typeof MOUNTS)[number];
 export const DEFAULT_DNS = process.env.CONTAINER_DNS ?? "1.1.1.1";
 export const CODEX_SQLITE_HOME = "/var/lib/agent-sandbox/codex";
 const CODEX_AUTH_FILE = "auth.json";
@@ -46,7 +52,10 @@ export function run(command: string, args: string[]): string {
   });
 }
 function inside(path: string, parent: string): boolean {
-  return path === parent || path.startsWith(parent + sep);
+  return (
+    path === parent ||
+    path.startsWith(parent.endsWith(sep) ? parent : parent + sep)
+  );
 }
 function file(path: string): boolean {
   return existsSync(path) && lstatSync(path).isFile();
@@ -172,16 +181,46 @@ export function withSymlinkTargets(paths: string[], home?: string): string[] {
   return [...mounts].sort();
 }
 
+type Mount = { source: string; readonly: boolean };
+type MountOptions = {
+  mount?: string[];
+  "mount-codex-auth"?: boolean;
+  "mount-skills"?: boolean;
+};
+
+function directoryMount(spec: string): Mount & { target: string } {
+  const parts = spec.split(":");
+  const [source, target, access] = parts;
+  if (
+    parts.length !== 3 ||
+    !source ||
+    !target ||
+    !posix.isAbsolute(target) ||
+    !["ro", "rw"].includes(access) ||
+    /[,\n]/.test(spec)
+  )
+    throw new Error("--mount requires SOURCE:/absolute/TARGET:ro|rw");
+  return {
+    source: resolve(source),
+    target: posix.resolve(target),
+    readonly: access === "ro",
+  };
+}
+
 export function mountPlan(
   checkout: string | undefined,
   home: string,
-  selected: readonly HostMount[] = [],
-): Map<string, boolean> {
-  const mounts = new Map(
-    (checkout ? repositoryMounts(checkout) : []).map((path) => [path, false]),
+  options: MountOptions = {},
+): Map<string, Mount> {
+  const hostHome = realpathSync(homedir());
+  const mounts = new Map<string, Mount>(
+    (checkout ? repositoryMounts(checkout) : []).map((path) => [
+      path,
+      { source: path, readonly: false },
+    ]),
   );
-  if (selected.includes("codex")) {
-    const codex = join(home, ".codex");
+  const codex = join(home, ".codex");
+  if (options["mount-codex-auth"]) {
     if (!directory(codex)) throw new Error(`Missing Codex directory: ${codex}`);
     if (lstatSync(codex).isSymbolicLink())
       throw new Error(
@@ -200,65 +239,89 @@ export function mountPlan(
       throw new Error(
         `Codex ${CODEX_AUTH_FILE} must be an existing regular file: ${auth}. Sign in on the host with file-backed credentials first.`,
       );
-    mounts.set(auth, true);
-  }
-  for (const profile of ["claude", "opencode"] as const) {
-    if (!selected.includes(profile)) continue;
-    const paths = (
-      profile === "claude"
-        ? [join(home, ".claude")]
-        : [
-            join(home, ".config", "opencode"),
-            join(home, ".local", "share", "opencode"),
-            join(home, ".local", "state", "opencode"),
-          ]
-    ).filter(existsSync);
-    if (!paths.length)
-      throw new Error(`No ${profile} state directories found in ${home}`);
-    for (const state of paths) {
-      if (!directory(state))
-        throw new Error(`Expected an agent state directory: ${state}`);
-      for (let path = state; path !== home; path = dirname(path)) {
-        if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink())
-          throw new Error(
-            `Agent state cannot use symlinked ancestors: ${path}`,
-          );
-      }
-      // Files inside shared, writable state are guest-controlled. Never expand
-      // their symlinks into additional host mounts on subsequent launches.
-      mounts.set(state, false);
-    }
+    mounts.set(auth, { source: auth, readonly: true });
   }
   const skills = join(home, ".agents", "skills");
-  if (selected.includes("skills")) {
+  let skillRoots: string[] = [];
+  if (options["mount-skills"]) {
     if (!existsSync(skills))
       throw new Error(`Missing agent skills directory: ${skills}`);
-    for (const path of withSymlinkTargets([skills], home))
-      mounts.set(path, true);
+    skillRoots = withSymlinkTargets([skills], home);
+    for (const path of skillRoots)
+      mounts.set(path, { source: path, readonly: true });
   }
-  if (selected.includes("codex") && mounts.get(join(home, ".codex")))
+  if (options["mount-codex-auth"] && mounts.has(codex))
     throw new Error(
       "The host Codex directory cannot also be a shared skill root",
     );
-  const plan = new Map<string, boolean>();
-  for (let [path, readonly] of [...mounts.entries()].sort(
+  const plan = new Map<string, Mount>();
+  for (const [path, mount] of [...mounts.entries()].sort(
     ([a], [b]) => a.length - b.length,
   )) {
-    if (inside(home, path))
+    if (inside(home, path) || inside(hostHome, path))
       throw new Error(`Refusing to expose host home: ${path}`);
     const inherited = [...plan.entries()]
       .filter(([parent]) => inside(path, parent))
-      .at(-1)?.[1];
-    readonly ||= inherited === true;
-    if (inherited !== readonly) plan.set(path, readonly);
+      .at(-1)?.[1].readonly;
+    mount.readonly ||= inherited === true;
+    if (inherited !== mount.readonly) plan.set(path, mount);
   }
-  return plan;
+  for (const spec of options.mount ?? []) {
+    const { target, readonly, source: requested } = directoryMount(spec);
+    if (!directory(requested))
+      throw new Error(
+        `Mount source must be an existing directory: ${requested}`,
+      );
+    const source = realpathSync(requested);
+    if (inside(home, source) || inside(hostHome, source))
+      throw new Error(`Refusing to expose host home: ${source}`);
+    if (
+      options["mount-codex-auth"] &&
+      (inside(codex, source) || inside(source, codex))
+    )
+      throw new Error(
+        "Directory mounts cannot expose host Codex state with --mount-codex-auth",
+      );
+    if (
+      !readonly &&
+      skillRoots.some((root) => inside(source, root) || inside(root, source))
+    )
+      throw new Error(
+        "A writable directory mount cannot also expose read-only shared skills",
+      );
+    const reserved = [
+      "/proc",
+      "/sys",
+      "/dev",
+      "/run",
+      "/var/run",
+      CODEX_SQLITE_HOME,
+      "/tmp/agent-hc.sock",
+    ];
+    if (
+      inside(home, target) ||
+      reserved.some((path) => inside(target, path) || inside(path, target)) ||
+      (options["mount-codex-auth"] &&
+        (inside(target, codex) || inside(codex, target)))
+    )
+      throw new Error(
+        `Mount target overlaps a reserved guest runtime path: ${target}`,
+      );
+    if (
+      [...plan.keys()].some(
+        (path) => inside(target, path) || inside(path, target),
+      )
+    )
+      throw new Error(`Mount target overlaps another mount: ${target}`);
+    plan.set(target, { source, readonly });
+  }
+  return new Map([...plan].sort(([a], [b]) => a.localeCompare(b)));
 }
 
 export function checkoutRoot(path: string): string {
   let current = realpathSync(path);
   if (!directory(current))
-    throw new Error(`--git requires a directory: ${path}`);
+    throw new Error(`--mount-git requires a directory: ${path}`);
   while (true) {
     if (lstatSync(join(current, ".git"), { throwIfNoEntry: false }))
       return current;
@@ -288,7 +351,7 @@ function requireName(name: string): string {
   return name;
 }
 export type Options = {
-  git?: string;
+  "mount-git"?: string;
   home?: string;
   name?: string;
   image?: string;
@@ -300,7 +363,9 @@ export type Options = {
   engine?: string;
   profile?: string;
   prompt?: string;
-  mount?: HostMount[];
+  mount?: string[];
+  "mount-codex-auth"?: boolean;
+  "mount-skills"?: boolean;
   detach?: boolean;
   rm?: boolean;
   terminal?: string;
@@ -390,21 +455,14 @@ export function createSandbox(options: Options): string {
   if (options.herdr && name.length > 32)
     throw new Error("--herdr requires a sandbox name of at most 32 characters");
   const checkout =
-    options.git !== undefined ? checkoutRoot(resolve(options.git)) : undefined;
+    options["mount-git"] !== undefined
+      ? checkoutRoot(resolve(options["mount-git"]))
+      : undefined;
   const workdir = checkout ?? "/workspace";
   const home = realpathSync(options.home ?? homedir());
-  const mounts = mountPlan(checkout, home, options.mount);
+  const mounts = mountPlan(checkout, home, options);
   const codex = join(home, ".codex");
-  const sharedCodex = options.mount?.includes("codex");
-  const claudeConfig = join(home, ".claude.json");
-  if (
-    options.mount?.includes("claude") &&
-    existsSync(claudeConfig) &&
-    !file(claudeConfig)
-  )
-    throw new Error(
-      `Claude configuration must be a regular file: ${claudeConfig}`,
-    );
+  const sharedCodex = options["mount-codex-auth"];
   const container = executable("container");
   const labels: Labels = {
     [LABEL]: "true",
@@ -449,15 +507,15 @@ export function createSandbox(options: Options): string {
   if (options.rm) args.push("--rm");
   args.push("--env", `CODEX_HOME=${codex}`);
   console.error(`Starting ${name}; host mounts:`);
-  for (const [path, readonly] of mounts) {
-    if (/[:,\n]/.test(path))
-      throw new Error(`Unsupported mount path delimiter: ${path}`);
-    args.push("--volume", `${path}:${path}${readonly ? ":ro" : ""}`);
-    console.error(`  ${readonly ? "ro" : "rw"} ${path}`);
+  for (const [target, { source, readonly }] of mounts) {
+    if (/[:,\n]/.test(source) || /[:,\n]/.test(target))
+      throw new Error(`Unsupported mount path delimiter: ${source}`);
+    args.push("--volume", `${source}:${target}${readonly ? ":ro" : ""}`);
+    console.error(`  ${readonly ? "ro" : "rw"} ${source} -> ${target}`);
   }
   if (sharedCodex) {
     console.error(
-      "  Codex auth is read-only: refresh/login cannot save credentials. If auth fails, renew host login and restart a persistent sandbox. With --rm, export work and save a verified handoff before stopping, then recreate it: stopping deletes guest files. Or use a sandbox without --mount codex for guest-local login. See README authentication limitations.",
+      "  Codex auth is read-only: refresh/login cannot save credentials. If auth fails, renew host login and restart a persistent sandbox. With --rm, export work and save a verified handoff before stopping, then recreate it: stopping deletes guest files. Or use a sandbox without --mount-codex-auth for guest-local login. See README authentication limitations.",
     );
   }
   run(container, [
@@ -487,10 +545,6 @@ export function createSandbox(options: Options): string {
         "safe.directory",
         checkout,
       ]);
-    // Claude atomically replaces this home-level file. Copy its initial config
-    // instead of mounting a single file or exposing the host's entire home.
-    if (options.mount?.includes("claude") && file(claudeConfig))
-      run(container, ["copy", claudeConfig, `${name}:${claudeConfig}`]);
     registerSandbox(name, labels);
   } catch (error) {
     // Registration is the last operation; a failed add must not remove an existing machine.
@@ -751,10 +805,10 @@ export function parseInvocation(input: string[]) {
       if (args[index + 1] === undefined)
         throw new Error("--prompt requires text");
       flags.push(`--prompt=${args[++index]}`);
-    } else if (args[index] === "--git") {
+    } else if (args[index] === "--mount-git") {
       const path = args[index + 1];
       flags.push(
-        `--git=${path && !path.startsWith("-") ? args[++index] : "."}`,
+        `--mount-git=${path && !path.startsWith("-") ? args[++index] : "."}`,
       );
     } else flags.push(args[index]);
   }
@@ -762,7 +816,7 @@ export function parseInvocation(input: string[]) {
   const names = [
     "engine",
     "image",
-    "git",
+    "mount-git",
     "home",
     "name",
     "cpus",
@@ -784,6 +838,8 @@ export function parseInvocation(input: string[]) {
       ),
       herdr: { type: "boolean", default: false },
       mount: { type: "string", multiple: true, default: [] },
+      "mount-codex-auth": { type: "boolean", default: false },
+      "mount-skills": { type: "boolean", default: false },
       detach: { type: "boolean", short: "d", default: false },
       rm: { type: "boolean", default: false },
       help: { type: "boolean", short: "h" },
@@ -795,7 +851,8 @@ export function parseInvocation(input: string[]) {
   if (values.skill) command = "skill";
   if (values.version) command = "version";
   const options = values as Options;
-  if (options.git === "") throw new Error("--git requires a nonempty path");
+  if (options["mount-git"] === "")
+    throw new Error("--mount-git requires a nonempty path");
   if (!command) throw new Error("Choose a command; run agent-sandbox --help");
   if (
     ["run", "start", "stop", "delete", "shell", "attach", "terminals"].includes(
@@ -826,8 +883,10 @@ export function parseInvocation(input: string[]) {
   if (
     command !== "run" &&
     (options.mount?.length ||
+      options["mount-codex-auth"] ||
+      options["mount-skills"] ||
       options.home ||
-      options.git !== undefined ||
+      options["mount-git"] !== undefined ||
       options.image ||
       options.cpus ||
       options.memory ||
@@ -844,8 +903,7 @@ export function parseInvocation(input: string[]) {
     !["run", "start", "shell", "help", "skill", "version"].includes(command)
   )
     throw new Error("--detach is supported by run, start and shell");
-  for (const mount of options.mount ?? [])
-    if (!MOUNTS.includes(mount)) throw new Error(`Unknown mount: ${mount}`);
+  for (const mount of options.mount ?? []) directoryMount(mount);
   if (options.agent && !["codex", "opencode", "claude"].includes(options.agent))
     throw new Error(`Unknown agent: ${options.agent}`);
   if (options.prompt !== undefined && !options.agent)
@@ -928,10 +986,13 @@ build / scan                  Build or scan images
   --herdr-space ID [--herdr-tab ID]   With shell: select a space/tab belonging to this sandbox
   --terminal ID_OR_NAME           Name a new terminal or select one to attach
   --exec COMMAND ARG...          Literal custom command; consumes remaining arguments
-  --git [PATH]                   Share a checkout/worktree, including Git metadata (default: current)
-  --mount codex|claude|opencode|skills  Share host state (repeatable; none by default)
+  --mount-git [PATH]              Share a checkout and Git metadata; start at its root (default: current checkout)
+  --mount-codex-auth              Mount only host Codex auth.json read-only
+  --mount-skills                  Share host agent skills read-only
+  --mount SOURCE:TARGET:ro|rw      Share a directory at an absolute guest path (repeatable)
 Creation: --home PATH --image TAG --dns IP --cpus N --memory 4G
-No checkout is shared by default; the guest starts in its own /workspace.
+Without --mount-git, workloads start in /workspace; --mount does not select the working directory.
+By default /workspace is guest-local; a directory mounted there becomes the starting location.
 Build/scan: --engine container|docker --profile base|codex|opencode|claude
 Foreground is the default. For hc supervision, launch directly from its host terminal with --detach --prompt.
 Exiting or detaching any terminal leaves its sandbox running. Bare invocation prints help.

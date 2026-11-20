@@ -71,8 +71,11 @@ worktree, and scratch hc configuration in a separate core session. It verifies:
 - Detached executable names containing spaces remain literal. Shell-like text
   does not execute unless the caller explicitly selects a shell.
 - Guest-local `/workspace` by default, with no host checkout or worktree shared.
-- Current-worktree file/index writes with `--git`, and explicit checkout
-  selection with `--git PATH`.
+- Current-worktree file/index writes with `--mount-git`, and explicit checkout
+  selection with `--mount-git PATH`; workloads start at that checkout's root.
+- Multiple directory mounts with independent guest targets, explicit read-only
+  and read/write access, and retained mappings across stop/start. Unit checks
+  reject overlapping targets and aliases that widen auth or skills access.
 - Visible Git metadata and staging in selected normal checkouts and linked
   worktrees, including their required external Git stores.
 - Multiple independent guest terminals; exiting one leaves the others and the
@@ -90,8 +93,8 @@ worktree, and scratch hc configuration in a separate core session. It verifies:
   Apple still exports the parent directory to its VM internally. Fake-credential
   tests do not establish working OAuth refresh, which cannot save through this
   mount; use the recovery steps in the README.
-- Writable Claude and OpenCode state directories, read-only shared skills,
-  and a guest-local Claude config copy without host writeback.
+- Guest-local Claude and OpenCode state without host writeback, read-only shared
+  skills, and rejection of unsupported agent state-mount presets.
 - Host-file exclusion and rejection of symlinks that would widen mount access.
 - Independent guest hc state, selected host-core registration, restoration after
   restart, and cleanup after the caller changes its hc session.
@@ -112,11 +115,11 @@ fake authentication state. They make no model requests and do not establish
 provider login or subscription acceptance.
 
 Claude Code and OpenCode have no completed authenticated model-task or token
-refresh acceptance test here. Their state mounts are not proof of login
-transfer. In particular, mounting Claude's directory does not export its macOS
-Keychain login. OpenCode v2 stores provider credentials in its server database;
-reusing that host database from the Linux guest remains unverified. Sign in
-inside the guest rather than assuming that a mounted directory transfers auth.
+refresh acceptance test here. There are no agent-specific host state mounts or
+Claude configuration copies. Generic directory shares are explicit file access,
+not a verified authentication-transfer mechanism.
+Sign in inside the guest. CLI version and guest-local state checks do not prove
+provider authentication works.
 
 The earlier completed, opt-in `smoke:codex` test used a writable whole-directory
 Codex mount and shared skills for a real model task. That historical result does

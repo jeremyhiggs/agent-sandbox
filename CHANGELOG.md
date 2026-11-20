@@ -8,7 +8,9 @@ Initial version of `agent-sandbox` for Apple silicon Macs using Apple's containe
   independent terminals, shell/exec access, restart, and deletion.
 - A Wolfi base with mise, pnpm, Git, GitHub CLI, hc, agent-browser, and Chrome.
   Separate Codex, OpenCode, and Claude Code images share that base.
-- Opt-in checkout/worktree, agent login/configuration, and skill mounts.
+- Dedicated `--mount-git`, `--mount-codex-auth`, and `--mount-skills` helpers,
+  plus repeatable directory mounts with explicit guest targets and `ro`/`rw`
+  access. Workloads start at the selected checkout root, or `/workspace` by default.
   No host checkout or credentials are mounted by default.
 - Optional Herdr spaces and native hc parent reporting without a shared host socket.
 - A copied installation that works after the source checkout moves.
@@ -27,9 +29,11 @@ Guest launches require Apple's runtime; Docker is supported for image builds and
 scans in CI. The amd64 OpenCode image requires AVX2; arm64 is unaffected.
 Opted-in writable mounts expose their contents to the guest agent.
 
-Authentication limitations: Claude's macOS Keychain login is not transferred;
-OpenCode host provider-login reuse and refresh remain unverified. State mounts
-do not guarantee authentication. Sign in inside the guest. Codex mounts only
-`auth.json` read-only into the container process. Guest refresh cannot save
-credentials; renew host login and stop/start to reattach the file, or use an
-independent guest login. Apple still shares the parent directory with its VM.
+Claude and OpenCode have no agent-specific host state mounts or configuration
+copies. Their authenticated workflows remain unverified; sign in inside the
+guest. Generic directory shares do not guarantee provider authentication.
+Codex mounts only `auth.json` read-only into the container process. Guest refresh
+cannot save credentials. Renew host login and stop/start a persistent sandbox
+to reattach the file, or use an independent guest login. With `--rm`, export work
+and save a verified handoff before stopping, then recreate the sandbox. Apple
+still shares the auth file's parent directory with its VM.

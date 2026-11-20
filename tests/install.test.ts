@@ -84,7 +84,7 @@ test("installation copies a standalone runtime, upgrades its shim and protects u
     assert.ok(!readFileSync(shim, "utf8").includes(ROOT));
     const git = spawnSync(
       shim,
-      ["run", "--name", "test", "--git", "--exec", "true"],
+      ["run", "--name", "test", "--mount-git", "--exec", "true"],
       { cwd: root, env, encoding: "utf8" },
     );
     assert.notEqual(git.status, 0);

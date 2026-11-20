@@ -33,7 +33,7 @@ with `start`. An existing sandbox's mounts and image are fixed at creation.
 agent-sandbox run --name work
 
 # Work on the selected checkout using existing Codex login and skills
-agent-sandbox run --name feature --detach --agent codex --git --mount codex --mount skills --herdr --prompt 'Implement the requested change and run its tests; report to the host hc parent'
+agent-sandbox run --name feature --detach --agent codex --mount-git --mount-codex-auth --mount-skills --herdr --prompt 'Implement the requested change and run its tests; report to the host hc parent'
 
 # Another command in that running sandbox
 agent-sandbox shell --name feature --exec node --test
@@ -48,17 +48,34 @@ space. Without Herdr integration, no host hc installation is required.
 
 Nothing is mounted by default. Recommend only the mounts needed for the task:
 
-- `--git` shares the current checkout/worktree; `--git PATH` selects another.
-  Git metadata is included so staging and commits work. Linked worktrees share
+- `--mount-git` shares the current checkout/worktree; `--mount-git PATH` selects another.
+  The shell or agent starts at the selected checkout's root, at the same absolute
+  path as on the host. Git metadata is included so staging and commits work.
+  Linked worktrees share
   their common Git store, including refs. Sibling working-tree paths are excluded,
   but repository history and committed files on other branches remain accessible.
-- State mounts do not guarantee host-login transfer. Claude's macOS Keychain
-  credentials are not exported; OpenCode provider authentication and refresh
-  through host state mounts are unverified. Sign in inside the guest.
-- `--mount codex` mounts host `auth.json` read-only. Refresh cannot save
+- Claude and OpenCode have no agent-specific host state mount or config copy.
+  Sign in inside the guest; authenticated workflows remain unverified.
+- `--mount-codex-auth` mounts host `auth.json` read-only. Refresh cannot save
   credentials; follow the recovery steps below if auth fails.
-- `--mount skills` shares agent skills read-only. Existing settings and skills
+- `--mount-skills` shares agent skills read-only. Existing settings and skills
   can reference host-only programs that need Linux equivalents.
+
+`--mount SOURCE:TARGET:ro|rw` adds an ordinary directory share and is repeatable.
+Require existing host directories, absolute guest targets and an explicit access
+mode. Prefer `ro` for reference inputs. Quote arguments with spaces. Targets must
+not overlap other mounts or reserved runtime paths; the host home cannot be
+shared wholesale. Source symlinks resolve to canonical host paths and do not
+approve nested symlink targets. Generic mounts cannot widen Codex auth sharing
+or provide writable aliases of shared skills.
+
+`--mount-git [PATH]` selects one working checkout and its required metadata.
+Additional repositories can be directory mounts, but their external worktree
+metadata is not automatically shared. Use self-contained checkouts for those.
+Without `--mount-git`, the starting directory is `/workspace`, guest-local unless
+a directory is mounted there. Other generic mount targets do not select the
+starting directory. `shell` and `start` reuse the saved location. Generic mounts
+share the explicit paths you select; they do not establish provider-login support.
 
 `--agent codex|claude|opencode` chooses the initial image and program. Without
 an agent, the base image opens Bash. `--prompt` requires an explicit agent.
@@ -69,10 +86,10 @@ sandbox without mounting their host state.
 Foreground `--exec` uses ordinary stdin/stdout without creating an hc terminal.
 
 Managed Codex uses file-backed auth and bypasses its inner sandbox/approvals.
-`--mount codex` passes only the regular host `.codex/auth.json` file through
+`--mount-codex-auth` passes only the regular host `.codex/auth.json` file through
 Apple Container's `--volume`, read-only at the same guest path. The guest's
 configuration, history, sessions, memories, locks and SQLite remain local.
-Shared skills require `--mount skills`. Apple implements the file mount by
+Shared skills require `--mount-skills`. Apple implements the file mount by
 sharing its parent directory with the VM, then exposing only the file to the
 container process; this is not an auth-only export at the VM boundary.
 
@@ -86,10 +103,11 @@ created without `--rm`, use `agent-sandbox stop` and `agent-sandbox start` to
 reattach the file. If it was created with `--rm`, export guest-local work and
 save a verified handoff outside the sandbox before stopping: stopping deletes
 its guest filesystem. Recreate it with renewed credentials instead of using
-`start`. If errors continue, create a sandbox without `--mount codex` and run
+`start`. If errors continue, create a sandbox without `--mount-codex-auth` and run
 `codex login --device-auth` inside it. Export the old sandbox's work before
 deletion. Never remove or overwrite the host auth file as a recovery step.
-Host Git identity, signing agents, SSH keys, and hc sockets are not mounted.
+Host Git identity, signing agents, SSH keys, and hc sockets are not automatically
+mounted. Generic directory shares grant access to the explicit paths selected.
 
 ## Progress and lifecycle
 

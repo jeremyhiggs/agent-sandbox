@@ -93,8 +93,45 @@ try {
   );
   assert.equal(readFileSync(join(work, ".git"), "utf8"), gitPointer);
   destroy(guestName("shell"));
+  const dataRW = join(root, "data rw"),
+    dataRO = join(root, "data ro");
+  mkdirSync(dataRW);
+  mkdirSync(dataRO);
+  writeFileSync(join(dataRO, "input.txt"), "read only input");
+  const directoryGuest = guestName("directories");
+  launch("directories", [
+    "--mount",
+    `${dataRW}:/workspace/output:rw`,
+    "--mount",
+    `${dataRO}:/data/input/:ro`,
+    "--exec",
+    "node",
+    "-e",
+    "const fs=require('node:fs'),a=require('node:assert/strict');a.equal(fs.readFileSync('/data/input/input.txt','utf8'),'read only input');a.throws(()=>fs.writeFileSync('/data/input/input.txt','blocked'),e=>['EROFS','EACCES'].includes(e.code));fs.writeFileSync('/workspace/output/result.txt','directory mount ready');",
+  ]);
+  assert.equal(
+    readFileSync(join(dataRW, "result.txt"), "utf8"),
+    "directory mount ready",
+  );
+  assert.equal(
+    readFileSync(join(dataRO, "input.txt"), "utf8"),
+    "read only input",
+  );
+  invoke(["stop", "--name", directoryGuest]);
+  assert.equal(
+    invoke([
+      "start",
+      "--name",
+      directoryGuest,
+      "--exec",
+      "cat",
+      "/workspace/output/result.txt",
+    ]),
+    "directory mount ready",
+  );
+  destroy(directoryGuest);
   launch("git-directory-visible", [
-    "--git",
+    "--mount-git",
     main,
     "--exec",
     "node",
@@ -118,9 +155,8 @@ try {
   `;
   assert.match(
     launch("literal", [
-      "--git",
-      "--mount",
-      "skills",
+      "--mount-git",
+      "--mount-skills",
       "--exec",
       "node",
       "-e",
@@ -157,21 +193,17 @@ try {
         : agent === "claude"
           ? join(home, ".claude")
           : join(home, ".local", "share", "opencode");
-    const stateProbe = `const fs=require('node:fs'); fs.writeFileSync(${JSON.stringify(join(guestHome, "agent-state"))}, '${agent}'); console.log(process.env.HOME)`;
+    const stateProbe = `const fs=require('node:fs'); fs.mkdirSync(${JSON.stringify(guestHome)},{recursive:true}); fs.writeFileSync(${JSON.stringify(join(guestHome, "agent-state"))}, '${agent}'); console.log(process.env.HOME)`;
     launch(agent, [
       "--agent",
       agent,
-      "--mount",
-      agent,
+      ...(agent === "codex" ? ["--mount-codex-auth"] : []),
       "--exec",
       "node",
       "-e",
       stateProbe,
     ]);
-    if (agent === "codex")
-      assert.equal(existsSync(join(guestHome, "agent-state")), false);
-    else
-      assert.equal(readFileSync(join(guestHome, "agent-state"), "utf8"), agent);
+    assert.equal(existsSync(join(guestHome, "agent-state")), false);
     destroy(guestName(agent));
     assert.ok(
       launch(`${agent}-version`, [
@@ -184,7 +216,7 @@ try {
     );
     destroy(guestName(`${agent}-version`));
   }
-  const authGuest = guestName("codex-auth");
+  const authGuest = guestName("mount-codex-auth");
   const authProbe = `
     const fs=require('node:fs'), assert=require('node:assert/strict');
     const home=${JSON.stringify(codex)}, auth=home+'/auth.json';
@@ -203,9 +235,8 @@ try {
     console.log('read-only auth and guest-local state verified');
   `;
   assert.match(
-    launch("codex-auth", [
-      "--mount",
-      "codex",
+    launch("mount-codex-auth", [
+      "--mount-codex-auth",
       "--exec",
       "node",
       "-e",
@@ -267,23 +298,13 @@ try {
   ]);
   destroy(guestName("state-private"));
   launch("all-mounts", [
-    "--mount",
-    "codex",
-    "--mount",
-    "claude",
-    "--mount",
-    "opencode",
-    "--mount",
-    "skills",
+    "--mount-codex-auth",
+    "--mount-skills",
     "--exec",
     "node",
     "-e",
-    `const fs=require('node:fs'), assert=require('node:assert/strict'); for (const path of ${JSON.stringify(privateState)}) assert.ok(fs.existsSync(path), path); fs.writeFileSync(${JSON.stringify(join(home, ".claude.json"))}, '{}'); console.log('all opt-in mounts available')`,
+    `const fs=require('node:fs'), assert=require('node:assert/strict'); for (const path of ${JSON.stringify([join(home, ".codex", "auth.json"), join(home, ".agents", "skills")])}) assert.ok(fs.existsSync(path), path); for (const path of ${JSON.stringify(privateState.slice(1, -1))}) assert.equal(fs.existsSync(path), false, path); console.log('read-only opt-in mounts available; other agent state excluded')`,
   ]);
-  assert.equal(
-    readFileSync(join(home, ".claude.json"), "utf8"),
-    '{"smoke":true}\n',
-  );
   destroy(guestName("all-mounts"));
   process.env.PATH = normalPath;
   // A separate core cannot disturb the user's active Herdr session.

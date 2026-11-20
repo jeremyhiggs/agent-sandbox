@@ -10,7 +10,7 @@ import {
   unlinkSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import {
@@ -31,6 +31,70 @@ function fixture(fn: (root: string) => void) {
     rmSync(root, { recursive: true });
   }
 }
+
+test("directory mounts preserve multiple explicit destinations and access modes", () =>
+  fixture((root) => {
+    const home = join(root, "home"),
+      a = join(root, "repo a"),
+      b = join(root, "data");
+    for (const path of [home, a, b]) mkdirSync(path);
+    const options = parseInvocation([
+      "run",
+      "--name",
+      "test",
+      "--mount-codex-auth",
+      "--mount-skills",
+      "--mount",
+      `${a}:/workspace/repo:rw`,
+      "--mount",
+      `${b}:/data:ro`,
+    ]).options;
+    assert.equal(options["mount-codex-auth"], true);
+    assert.equal(options["mount-skills"], true);
+    const plan = mountPlan(undefined, home, { mount: options.mount });
+    assert.deepEqual(
+      [...plan.entries()],
+      [
+        ["/data", { source: b, readonly: true }],
+        ["/workspace/repo", { source: a, readonly: false }],
+      ],
+    );
+    for (const spec of [
+      a,
+      `${a}:/data`,
+      `${a}:relative:rw`,
+      `${a}:/data:bad`,
+    ]) {
+      assert.throws(
+        () => parseInvocation(["run", "--name", "test", "--mount", spec]),
+        /mount/i,
+      );
+    }
+    assert.throws(
+      () =>
+        mountPlan(undefined, home, {
+          mount: [`${a}:/data:ro`, `${b}:/data/child:rw`],
+        }),
+      /overlap|conflict/i,
+    );
+    assert.throws(
+      () => mountPlan(undefined, home, { mount: [`${home}:/data:ro`] }),
+      /host home/i,
+    );
+    assert.throws(
+      () => mountPlan(undefined, home, { mount: [`${homedir()}:/data:ro`] }),
+      /host home/i,
+    );
+    writeFileSync(join(root, "file"), "file");
+    assert.throws(
+      () => mountPlan(undefined, home, { mount: [`${root}/file:/data:ro`] }),
+      /directory/i,
+    );
+    assert.throws(
+      () => mountPlan(undefined, home, { mount: [`${a}:/proc:rw`] }),
+      /reserved|runtime/i,
+    );
+  }));
 
 test("Codex auth sharing mounts only the read-only credential file", () =>
   fixture((root) => {
@@ -55,7 +119,7 @@ test("Codex auth sharing mounts only the read-only credential file", () =>
       createSandbox({
         name: "auth-file",
         home: root,
-        mount: ["codex"],
+        "mount-codex-auth": true,
         herdr: false,
       });
     } finally {
@@ -74,6 +138,79 @@ test("Codex auth sharing mounts only the read-only credential file", () =>
     assert.ok(launch.includes(`CODEX_HOME=${codex}`));
     assert.ok(!launch.includes("--masked-path"));
     assert.ok(!calls.some((args) => args.includes("ln")));
+  }));
+
+test("directory targets normalize trailing slashes before home and overlap checks", () =>
+  fixture((root) => {
+    const home = join(root, "home"),
+      data = join(root, "data");
+    mkdirSync(home);
+    mkdirSync(data);
+    for (const target of [home, home + "/"]) {
+      assert.throws(
+        () => mountPlan(undefined, home, { mount: [`${data}:${target}:rw`] }),
+        /reserved/,
+      );
+    }
+    assert.deepEqual(
+      [
+        ...mountPlan(undefined, home, {
+          mount: [`${data}:/reference/:ro`],
+        }).keys(),
+      ],
+      ["/reference"],
+    );
+    assert.throws(
+      () =>
+        mountPlan(undefined, home, {
+          mount: [`${data}:/reference/:ro`, `${data}:/reference:rw`],
+        }),
+      /overlap/,
+    );
+  }));
+
+test("directory aliases cannot widen Codex auth or write through shared skills", () =>
+  fixture((root) => {
+    const home = join(root, "home"),
+      codex = join(home, ".codex"),
+      skills = join(home, ".agents", "skills"),
+      data = join(root, "data");
+    for (const path of [codex, skills, data])
+      mkdirSync(path, { recursive: true });
+    writeFileSync(join(codex, "auth.json"), "{}");
+    const auth = { "mount-codex-auth": true };
+    assert.throws(
+      () =>
+        mountPlan(undefined, home, { ...auth, mount: [`${codex}:/alias:ro`] }),
+      /Codex state/,
+    );
+    const link = join(root, "auth-alias");
+    symlinkSync(codex, link);
+    assert.throws(
+      () =>
+        mountPlan(undefined, home, { ...auth, mount: [`${link}:/alias:rw`] }),
+      /Codex state/,
+    );
+    assert.throws(
+      () =>
+        mountPlan(undefined, home, { ...auth, mount: [`${data}:${codex}:rw`] }),
+      /reserved/,
+    );
+    assert.throws(
+      () =>
+        mountPlan(undefined, home, {
+          "mount-skills": true,
+          mount: [`${join(home, ".agents")}:/alias:rw`],
+        }),
+      /read-only shared skills/,
+    );
+    const normal = mountPlan(undefined, home, {
+      ...auth,
+      "mount-skills": true,
+      mount: [`${data}:/data:rw`],
+    });
+    assert.equal(normal.get(join(codex, "auth.json"))?.readonly, true);
+    assert.equal(normal.get("/data")?.readonly, false);
   }));
 
 test("linked worktree mounts checkout and common Git directory without main checkout", () =>
@@ -160,8 +297,13 @@ test("invalid Git selections fail before looking for the container runtime", () 
       ])
         assert.throws(
           () =>
-            createSandbox({ git, home: root, name: "invalid", herdr: false }),
-          /Invalid Git metadata|Unrecognized Git pointer|No Git checkout|Git metadata cannot be a symlink|--git requires a directory/,
+            createSandbox({
+              "mount-git": git,
+              home: root,
+              name: "invalid",
+              herdr: false,
+            }),
+          /Invalid Git metadata|Unrecognized Git pointer|No Git checkout|Git metadata cannot be a symlink|--mount-git requires a directory/,
         );
     } finally {
       process.env.PATH = path;
@@ -187,7 +329,13 @@ test("agent skills remain read-only when Codex skills link to the same directory
     writeFileSync(join(root, ".codex", "auth.json"), "{}\n");
     mkdirSync(skills, { recursive: true });
     symlinkSync(skills, join(root, ".codex", "skills"));
-    assert.equal(mountPlan(work, root, ["codex", "skills"]).get(skills), true);
+    assert.equal(
+      mountPlan(work, root, {
+        "mount-codex-auth": true,
+        "mount-skills": true,
+      }).get(skills)?.readonly,
+      true,
+    );
   }));
 
 test("read-only skill aliases into Codex keep a read-only overlay", () =>
@@ -200,11 +348,21 @@ test("read-only skill aliases into Codex keep a read-only overlay", () =>
     writeFileSync(join(root, ".codex", "auth.json"), "{}\n");
     mkdirSync(skills, { recursive: true });
     symlinkSync(target, join(skills, "example"));
-    assert.equal(mountPlan(work, root, ["codex", "skills"]).get(target), true);
+    assert.equal(
+      mountPlan(work, root, {
+        "mount-codex-auth": true,
+        "mount-skills": true,
+      }).get(target)?.readonly,
+      true,
+    );
     unlinkSync(join(skills, "example"));
     symlinkSync(join(root, ".codex"), join(skills, "example"));
     assert.throws(
-      () => mountPlan(work, root, ["codex", "skills"]),
+      () =>
+        mountPlan(work, root, {
+          "mount-codex-auth": true,
+          "mount-skills": true,
+        }),
       /Codex directory cannot also be a shared skill root/,
     );
   }));
@@ -218,7 +376,7 @@ test("Codex auth must be an existing regular file", () =>
     mkdirSync(codex);
     mkdirSync(other);
     assert.throws(
-      () => mountPlan(work, root, ["codex"]),
+      () => mountPlan(work, root, { "mount-codex-auth": true }),
       /existing regular file/,
     );
     for (const name of ["auth.json"]) {
@@ -226,7 +384,7 @@ test("Codex auth must be an existing regular file", () =>
       writeFileSync(target, "fixture");
       symlinkSync(target, join(codex, name));
       assert.throws(
-        () => mountPlan(work, root, ["codex"]),
+        () => mountPlan(work, root, { "mount-codex-auth": true }),
         /must be an existing regular file/,
       );
       unlinkSync(join(codex, name));
@@ -237,12 +395,15 @@ test("Git sharing cannot also expose host Codex state", () =>
   fixture((root) => {
     mkdirSync(join(root, ".codex"));
     assert.throws(
-      () => mountPlan(root, root, ["codex"]),
+      () => mountPlan(root, root, { "mount-codex-auth": true }),
       /Git sharing cannot also expose/,
     );
     mkdirSync(join(root, ".codex", "repo"));
     assert.throws(
-      () => mountPlan(join(root, ".codex", "repo"), root, ["codex"]),
+      () =>
+        mountPlan(join(root, ".codex", "repo"), root, {
+          "mount-codex-auth": true,
+        }),
       /Git sharing cannot also expose/,
     );
     const main = join(root, ".codex", "repo"),
@@ -259,7 +420,7 @@ test("Git sharing cannot also expose host Codex state", () =>
       work,
     ]);
     assert.throws(
-      () => mountPlan(work, root, ["codex"]),
+      () => mountPlan(work, root, { "mount-codex-auth": true }),
       /Git sharing cannot also expose/,
     );
   }));
@@ -272,7 +433,7 @@ test("a symlinked Codex home is rejected before mounting credentials", () =>
     mkdirSync(target, { recursive: true });
     symlinkSync(target, join(root, ".codex"));
     assert.throws(
-      () => mountPlan(work, root, ["codex"]),
+      () => mountPlan(work, root, { "mount-codex-auth": true }),
       /Codex directory.*symlink/,
     );
   }));
@@ -313,7 +474,7 @@ test("nested links in a checkout-backed skill cannot add host mounts", () =>
     symlinkSync(target, join(skills, "review"));
     symlinkSync(secret, join(target, "secrets"));
     assert.throws(
-      () => mountPlan(work, root, ["skills"]),
+      () => mountPlan(work, root, { "mount-skills": true }),
       /outside approved skill roots/,
     );
   }));
@@ -362,7 +523,7 @@ test("skill roots reject symlinked ancestors before approving their contents", (
     symlinkSync(work, join(root, ".agents"));
     symlinkSync(secret, join(work, "skills", "secrets"));
     assert.throws(
-      () => mountPlan(work, root, ["skills"]),
+      () => mountPlan(work, root, { "mount-skills": true }),
       /symlinked ancestors/,
     );
   }));
@@ -376,7 +537,11 @@ test("skill symlink cannot expose host home", () =>
     mkdirSync(join(root, "project"));
     symlinkSync(root, join(skills, "unsafe"));
     assert.throws(
-      () => mountPlan(join(root, "project"), root, ["codex", "skills"]),
+      () =>
+        mountPlan(join(root, "project"), root, {
+          "mount-codex-auth": true,
+          "mount-skills": true,
+        }),
       /host home/,
     );
   }));
@@ -392,7 +557,7 @@ test("unrelated dangling Codex cache symlinks do not block the mount plan", () =
       join(root, ".codex", ".tmp", "old"),
     );
     assert.deepEqual(
-      new Set(mountPlan(work, root, ["codex"]).keys()),
+      new Set(mountPlan(work, root, { "mount-codex-auth": true }).keys()),
       new Set([work, join(root, ".codex", "auth.json")]),
     );
   }));
@@ -441,44 +606,54 @@ test("--skill reads the bundled guidance outside a checkout without host tools",
     );
   }));
 
-test("--git opts into sharing the current or specified checkout", () => {
+test("--mount-git opts into sharing the current or specified checkout", () => {
   const args = ["run", "--name", "feature"];
-  assert.equal(parseInvocation(args).options.git, undefined);
+  assert.equal(parseInvocation(args).options["mount-git"], undefined);
   assert.deepEqual(parseInvocation(args).options.mount, []);
-  assert.equal(parseInvocation([...args, "--git"]).options.git, ".");
   assert.equal(
-    parseInvocation([...args, "--git", "/a worktree"]).options.git,
+    parseInvocation([...args, "--mount-git"]).options["mount-git"],
+    ".",
+  );
+  assert.equal(
+    parseInvocation([...args, "--mount-git", "/a worktree"]).options[
+      "mount-git"
+    ],
     "/a worktree",
   );
   assert.equal(
-    parseInvocation([...args, "--git=../work"]).options.git,
+    parseInvocation([...args, "--mount-git=../work"]).options["mount-git"],
     "../work",
   );
   assert.equal(
-    parseInvocation([...args, "--git", "--mount", "skills"]).options.git,
+    parseInvocation([...args, "--mount-git", "--mount-skills"]).options[
+      "mount-git"
+    ],
     ".",
   );
   const custom = parseInvocation([
     ...args,
-    "--git",
+    "--mount-git",
     "--exec",
     "echo",
-    "--git",
+    "--mount-git",
     "literal",
   ]);
-  assert.equal(custom.options.git, ".");
-  assert.deepEqual(custom.argv, ["echo", "--git", "literal"]);
+  assert.equal(custom.options["mount-git"], ".");
+  assert.deepEqual(custom.argv, ["echo", "--mount-git", "literal"]);
   assert.throws(
     () => parseInvocation([...args, "--checkout", "."]),
     /Unknown option/,
   );
   assert.throws(
     () => parseInvocation([...args, "--mount", "git"]),
-    /Unknown mount/,
+    /--mount requires/,
   );
-  assert.throws(() => parseInvocation([...args, "--git="]), /nonempty path/);
   assert.throws(
-    () => parseInvocation(["shell", "--name", "feature", "--git"]),
+    () => parseInvocation([...args, "--mount-git="]),
+    /nonempty path/,
+  );
+  assert.throws(
+    () => parseInvocation(["shell", "--name", "feature", "--mount-git"]),
     /chosen at creation/,
   );
 });
@@ -568,91 +743,64 @@ test("base mount plan exposes no host checkout or agent credentials", () =>
     assert.deepEqual([...mountPlan(work, root).keys()], [work]);
   }));
 
-test("opted-in agent state never expands host mounts through contained symlinks", () =>
-  fixture((root) => {
-    const work = join(root, "work");
-    mkdirSync(work);
-    const secret = join(root, ".ssh");
-    mkdirSync(secret);
-    for (const agent of ["claude", "opencode"] as const) {
-      const state =
-        agent === "claude"
-          ? join(root, ".claude")
-          : join(root, ".local", "share", "opencode");
-      mkdirSync(state, { recursive: true });
-      symlinkSync(secret, join(state, "host-ssh"));
-      assert.deepEqual(
-        new Set(mountPlan(work, root, [agent]).keys()),
-        new Set([work, state]),
-      );
-    }
-  }));
-
-test("agent state cannot redirect through a symlinked ancestor", () =>
-  fixture((root) => {
-    const work = join(root, "work");
-    mkdirSync(work);
-    const outside = join(root, "elsewhere");
-    mkdirSync(join(outside, "share", "opencode"), { recursive: true });
-    symlinkSync(outside, join(root, ".local"));
+test("unverified agent state mounts are rejected while agent launches remain available", () => {
+  for (const agent of ["claude", "opencode"] as const) {
     assert.throws(
-      () => mountPlan(work, root, ["opencode"]),
-      /symlinked ancestors/,
+      () => parseInvocation(["run", "--name", "test", "--mount", agent]),
+      /--mount requires/,
     );
-  }));
+    assert.equal(
+      parseInvocation(["run", "--name", "test", "--agent", agent]).options
+        .agent,
+      agent,
+    );
+  }
+});
 
 test("host state and skills are opt-in independently of agent selection", () =>
   fixture((root) => {
     const work = join(root, "work");
     const codex = join(root, ".codex");
-    const claude = join(root, ".claude");
-    const config = join(root, ".config", "opencode");
-    const data = join(root, ".local", "share", "opencode");
     const skills = join(root, ".agents", "skills");
-    for (const path of [work, codex, claude, config, data, skills])
+    for (const path of [work, codex, skills])
       mkdirSync(path, { recursive: true });
     symlinkSync(skills, join(codex, "skills"));
     const auth = join(codex, "auth.json");
     writeFileSync(auth, "{}\n");
-    assert.deepEqual([...mountPlan(undefined, root, ["codex"]).keys()], [auth]);
+    assert.deepEqual(
+      [...mountPlan(undefined, root, { "mount-codex-auth": true }).keys()],
+      [auth],
+    );
     assert.deepEqual([...mountPlan(work, root).keys()], [work]);
     assert.deepEqual(
-      new Set(mountPlan(work, root, ["codex"]).keys()),
+      new Set(mountPlan(work, root, { "mount-codex-auth": true }).keys()),
       new Set([work, auth]),
     );
-    const selected = mountPlan(work, root, [
-      "codex",
-      "claude",
-      "opencode",
-      "skills",
-    ]);
-    assert.deepEqual(
-      new Set(selected.keys()),
-      new Set([work, auth, claude, config, data, skills]),
-    );
-    assert.equal(selected.get(skills), true);
+    const selected = mountPlan(work, root, {
+      "mount-codex-auth": true,
+      "mount-skills": true,
+    });
+    assert.deepEqual(new Set(selected.keys()), new Set([work, auth, skills]));
+    assert.equal(selected.get(skills)?.readonly, true);
     assert.deepEqual(
       parseInvocation(["run", "--name", "test", "--agent", "codex"]).options
         .mount,
       [],
     );
-    assert.deepEqual(
-      parseInvocation([
-        "run",
-        "--name",
-        "test",
-        "--agent",
-        "codex",
-        "--mount",
-        "claude",
-        "--mount",
-        "opencode",
-      ]).options.mount,
-      ["claude", "opencode"],
-    );
+    const explicit = parseInvocation([
+      "run",
+      "--name",
+      "test",
+      "--agent",
+      "codex",
+      "--mount-codex-auth",
+      "--mount-skills",
+    ]).options;
+    assert.equal(explicit["mount-codex-auth"], true);
+    assert.equal(explicit["mount-skills"], true);
     assert.throws(
       () => parseInvocation(["run", "--name", "test", "--mount", "all"]),
-      /Unknown mount/,
+      /--mount requires/,
     );
   }));
 

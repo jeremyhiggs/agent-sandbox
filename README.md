@@ -64,9 +64,14 @@ From another folder, use `mise -C /path/to/agent-sandbox run install`.
 ## Create and use a sandbox
 
 Run commands from any directory. No checkout is shared by default; the guest
-starts in its own persistent `/workspace`. Use `--git` to share the current
-checkout or linked worktree, or `--git PATH` to select one elsewhere.
-Sharing requires Git on the host; Git validates the selected metadata before startup.
+starts in its own persistent `/workspace`. Use `--mount-git` to share the current
+checkout or linked worktree, or `--mount-git PATH` to select one elsewhere.
+The shell or agent starts at the selected checkout's root, at the same absolute
+path as on the host. A path inside a checkout selects that root. Ordinary
+`--mount` options do not change the starting directory; mounting a directory at
+`/workspace` puts it at the default starting location. `shell` and `start` reuse
+the saved starting directory.
+Checkout sharing requires Git on the host; Git validates the selected metadata before startup.
 A command is required; a bare invocation prints help. Creation requires a name.
 
 Names contain 1-50 lowercase letters, digits, hyphens, or underscores and start
@@ -75,21 +80,24 @@ oversized names are rejected before guest creation.
 
 ```sh
 agent-sandbox run --name feature
-agent-sandbox run --name codex-work --agent codex --git --mount codex --mount skills --herdr
-agent-sandbox run --name reviewer --git /path/to/worktree --agent opencode --prompt 'Review this checkout'
-agent-sandbox run --name tests --git --exec pnpm test
+agent-sandbox run --name codex-work --agent codex --mount-git --mount-codex-auth --mount-skills --herdr
+agent-sandbox run --name reviewer --mount-git /path/to/worktree --agent opencode --prompt 'Review this checkout'
+agent-sandbox run --name tests --mount-git --exec pnpm test
 agent-sandbox run --name worker --agent claude
 ```
 
 Sandboxes are persistent and foreground by default. Exiting a shell, agent, or
-custom command leaves the sandbox running. In Codex, run the ordinary command in
-a PTY (`tty: true`) and yield it as a background terminal with a short
+custom command leaves the sandbox running. For an attached interactive session
+in Codex, run the foreground command in a PTY (`tty: true`) and yield it as a
+background terminal with a short
 `yield_time_ms`, such as 1000. The running launcher/workload then stays visible
 in Codex's background processes. Retain its session ID to read output or send
 input. No `--detach` is needed for this workflow.
 
-Use `--detach` (`-d`) when a script deliberately needs an immediate return; it
-launches a managed terminal and returns its ID without attaching.
+For an agent supervised through hc messages, launch directly from its supervising
+host hc terminal with `--detach --agent codex --prompt 'TASK'`. Scripts can also
+use `--detach` (`-d`) when they need an immediate return. It launches a managed
+terminal and returns its ID without attaching.
 Detach an attached terminal with
 Ctrl+Backslash. Both exit and detach leave other terminals running.
 
@@ -125,7 +133,7 @@ agent-sandbox shell --name tests --exec sh -lc 'mise trust && mise install && mi
 ```
 
 The default guest has four CPUs and 4 GB of memory. At creation, use
-`--git [PATH]`, `--cpus 6`, `--memory 8G`, or `--image TAG` as needed.
+`--mount-git [PATH]`, `--cpus 6`, `--memory 8G`, or `--image TAG` as needed.
 `--home PATH` selects the host state/skills source; its entire contents are not
 mounted. Mounts, image, resources, and Herdr integration are fixed at creation.
 Apple builds and guests default to DNS resolver `1.1.1.1`; `--dns IP` or
@@ -244,7 +252,7 @@ For host-supervised agent work, launch directly from the supervising hc terminal
 with an initial prompt, then exchange tasks and reports through hc:
 
 ```sh
-agent-sandbox run --name worker --detach --agent codex --git --mount codex --herdr --prompt 'Inspect the checkout, confirm your hc parent, and report readiness to it before starting the assigned task'
+agent-sandbox run --name worker --detach --agent codex --mount-git --mount-codex-auth --herdr --prompt 'Inspect the checkout, confirm your hc parent, and report readiness to it before starting the assigned task'
 agent-sandbox terminals --name worker
 hc send worker/TERMINAL_ID 'Run the agreed focused checks and report the results'
 ```
@@ -278,11 +286,11 @@ Stopping it through Apple's CLI bypasses the wrapper's registration cleanup.
 Selecting an agent launches its CLI; it does not transfer your host login.
 No host credentials or provider environment variables are forwarded by default.
 
-| Agent       | Host authentication reuse                                                                                                                                                                             | What to do in the guest                                                                             |
-| ----------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Codex       | `--mount codex` mounts only `auth.json` read-only into the container. Guest token refresh cannot save credentials; see recovery below.                                                                | Use the mounted login with its refresh limitation, or sign in in a sandbox without `--mount codex`. |
-| Claude Code | A macOS Keychain login is not transferred by `--mount claude`. A file-backed credential may be present in the mounted directory, but authenticated model requests and refresh have not been verified. | Run Claude's login flow inside the guest.                                                           |
-| OpenCode    | Host provider authentication is not transferred automatically. `--mount opencode` shares state directories, but cross-platform provider login and refresh have not been verified.                     | Use `/connect` or `opencode auth login` inside the guest.                                           |
+| Agent       | Host authentication reuse                                                                                                                   | What to do in the guest                                                                                  |
+| ----------- | ------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Codex       | `--mount-codex-auth` mounts only `auth.json` read-only into the container. Guest token refresh cannot save credentials; see recovery below. | Use the mounted login with its refresh limitation, or sign in in a sandbox without `--mount-codex-auth`. |
+| Claude Code | No agent-specific host state mount or config copy is provided. Authenticated model requests and refresh have not been verified.             | Run `claude auth login` inside the guest.                                                                |
+| OpenCode    | No agent-specific host state mount is provided. Authenticated model requests and refresh have not been verified.                            | Run `opencode auth login` inside the guest.                                                              |
 
 CLI version checks, browser checks, and fake-state mount tests do not establish
 authenticated access to a provider or subscription. Guest-local logins persist
@@ -290,38 +298,56 @@ across stop/start and are lost when the sandbox is deleted.
 
 ### Available mounts
 
-| Host content                                                               | Access                                      | Opt-in                         |
-| -------------------------------------------------------------------------- | ------------------------------------------- | ------------------------------ |
-| Selected checkout/worktree and its required Git metadata                   | Read/write, same paths                      | `--git [PATH]`                 |
-| `~/.codex/auth.json`                                                       | Read-only file mount, same path             | `--mount codex`                |
-| `~/.claude`                                                                | Read/write, same path                       | `--mount claude`               |
-| `~/.claude.json`                                                           | Initial guest-local copy; no writeback      | `--mount claude`, when present |
-| `~/.config/opencode`, `~/.local/share/opencode`, `~/.local/state/opencode` | Read/write existing directories, same paths | `--mount opencode`             |
-| `~/.agents/skills` and direct symlink targets                              | Read-only, same paths                       | `--mount skills`               |
+| Host content                                             | Access                                   | Opt-in                         |
+| -------------------------------------------------------- | ---------------------------------------- | ------------------------------ |
+| Selected checkout/worktree and its required Git metadata | Read/write, same paths                   | `--mount-git [PATH]`           |
+| `~/.codex/auth.json`                                     | Read-only file mount, same path          | `--mount-codex-auth`           |
+| `~/.agents/skills` and direct symlink targets            | Read-only, same paths                    | `--mount-skills`               |
+| Selected host directory                                  | Explicit `ro` or `rw`, chosen guest path | `--mount SOURCE:TARGET:ro\|rw` |
 
-Select mounts independently of installed agents. For example, a Codex image can
-share Claude state in preparation for installing Claude inside the guest:
+Mount helpers are independent of the selected agent. Use `--mount-git [PATH]`
+for a checkout and its required Git metadata, `--mount-codex-auth` for the
+read-only Codex credential file, and `--mount-skills` for read-only shared skills.
+Use repeatable `--mount SOURCE:TARGET:ro|rw` for ordinary directories:
 
 ```sh
-agent-sandbox run --name ac-feature --agent codex --mount codex --mount claude --mount opencode --mount skills
+agent-sandbox run --name ac-feature --agent codex --mount-git --mount-codex-auth --mount-skills \
+  --mount "$HOME/Documents/reference:/reference:ro" \
+  --mount "$HOME/Documents/sandbox-output:/output:rw"
 ```
 
 No checkout, worktree, Git metadata, agent state, or shared skills are mounted
-by default. Requested state profiles must
-have existing state under the selected `--home`; Codex requires a regular `auth.json` file. Each mount
-is printed before creation. Claude and OpenCode state mounts are writable,
-including refreshed credentials, settings, history, and the OpenCode database. Claude's home-level
-`.claude.json` is copied once so guest-side atomic replacement works without
-sharing the host's home; guest changes to that file do not update the host.
-Existing guest ownership labels are retained across the command rename.
-Previous private Linux homes under `~/.local/share/agent-container` remain on disk
-but are no longer mounted automatically.
+by default. Codex requires a regular `auth.json` file under the selected `--home`;
+shared skills require the corresponding skills directory. Each mount is printed
+before creation, including host source, guest target and access mode. Directory
+sources must already exist; quote paths containing spaces. Targets must be
+absolute guest paths and the access mode is required. Relative source paths are
+resolved from the caller's working directory; symlinks resolve to their canonical
+host directory. Nested symlinks do not add shares.
+
+`--mount-git [PATH]` selects one working checkout and its starting directory.
+Additional directory mounts do
+not discover or share external Git metadata; use self-contained checkouts when
+mounting additional repositories. Generic directory targets cannot overlap other
+mounts,
+the selected checkout, or reserved runtime paths. The guest home itself and host
+home directory cannot be mounted wholesale. With `--mount-codex-auth`, generic
+mounts cannot expose other state from the selected host Codex directory or cover
+its guest directory.
+Writable aliases of shared skills are rejected. Mount settings are fixed at
+creation; `shell` and `start` reuse them.
+
+Claude and OpenCode use guest-local authentication, configuration and history by
+default. Their agent-specific host state-mount presets are unsupported. Generic
+directory mounts share the paths you explicitly select; sharing authentication
+directories this way does not establish a supported provider-login workflow.
 
 Mounts are printed before startup. The selected checkout and opted-in shared Git refs
 can be modified or deleted by the agent. Sibling working-tree paths are not
 mounted, but repository history and committed files on other branches remain accessible.
 Host SSH/AWS directories, credential helpers, signing agents, global
-Git configuration, runtime control sockets, and host hc state are not mounted.
+Git configuration, runtime control sockets, and host hc state are not
+automatically mounted. Generic directory shares grant access to the selected paths.
 Configure a guest Git identity if it needs to commit. `gh` is installed without
 mounting host GitHub credentials; authenticate inside the guest if needed. Image builds never include
 checkout contents, user configuration, or credentials.
@@ -331,7 +357,7 @@ network access and can publish if it obtains credentials. When publication needs
 manual approval, keep it on the host and do not provision publishing credentials
 in the guest; this remains an operating policy rather than a technical block.
 
-With `--git [PATH]`, Git metadata inside the selected checkout stays visible.
+With `--mount-git [PATH]`, Git metadata inside the selected checkout stays visible.
 For linked worktrees, the validated common Git store is shared automatically
 so status, staging, and commits work. A path inside a checkout selects its root.
 Ordinary checkouts and registered linked worktrees are supported; symlinked
@@ -341,12 +367,13 @@ metadata stores are discovered through `.jj` links.
 
 ### Codex read-only authentication
 
-With `--mount codex`, the launcher passes only the existing host
+With `--mount-codex-auth`, the launcher passes only the existing host
 `~/.codex/auth.json` to Apple Container through `--volume`, read-only at the same
 path inside the guest. The host file stays in place. It must be a regular file,
 not a symlink. The rest of the guest `.codex` directory stays writable and local;
-host configuration, hooks, history, sessions, and databases are not mounted into
-the container process. Shared skills require `--mount skills`.
+the auth helper does not mount host configuration, hooks, history, sessions or
+databases into the container process. Other opt-in mounts grant access to their
+selected paths. Shared skills require `--mount-skills`.
 
 **Runtime boundary:** Apple Container 1.7.1 implements a single-file mount by
 sharing its parent directory with the underlying VM and bind-mounting the file
@@ -390,7 +417,7 @@ authentication/refresh failure:
    agent-sandbox start --name codex-work --agent codex
    ```
 
-3. If the problem continues, create a sandbox without `--mount codex` and use
+3. If the problem continues, create a sandbox without `--mount-codex-auth` and use
    `codex login --device-auth` inside it. That guest has writable, independent
    credentials. Keep or export the old sandbox's work before deleting it.
 
@@ -452,26 +479,16 @@ Codex auth mount and disappear on deletion unless exported.
 
 ### Other agent state
 
-Claude and OpenCode host-login transfer is not an established supported workflow.
-The state-mount options expose files; they do not export Keychain credentials,
-forward provider environment variables, or guarantee working authentication.
-
-Claude reads file-backed Linux credentials from `~/.claude/.credentials.json`.
-A macOS Keychain login is not exported by mounting that directory; use Claude's
-login flow inside the guest if no file-backed credential exists. OpenCode v2
-keeps credentials in its data-directory SQLite database, not just the legacy
-`auth.json`. See [Claude credential storage](https://code.claude.com/docs/en/authentication#credential-management)
-and [OpenCode storage](https://opencode.ai/docs/cli/providers/#storage).
-
-Without an opt-in, agents use guest-local state. A persistent guest keeps it until
-deletion; an automatically removed guest loses it when the sandbox stops. Claude retains its normal
-permission prompts. Agent state directories must be real directories with no
-symlinked ancestors. Links inside writable agent state never add host mounts;
-Codex skill links into `~/.agents/skills` need `--mount skills` too.
+Claude and OpenCode use guest-local state by default. Sign in inside the guest;
+the launcher provides no agent-specific host authentication mount or Claude
+configuration copy. A persistent guest keeps its local state until deletion;
+an automatically removed guest loses it when the sandbox stops. Claude retains
+its normal permission prompts. Codex skill links into `~/.agents/skills` need
+`--mount-skills` too.
 
 Shared skills can reference macOS tools, MCP servers, or host-only paths. Those
 require Linux equivalents; host Codex configuration is not loaded. The guest cannot update the mounted host login cache.
-Host skills are unavailable unless explicitly exposed through `--mount skills`. Shared skills are read-only files; discovery rules vary by agent.
+Host skills are unavailable unless explicitly exposed through `--mount-skills`. Shared skills are read-only files; discovery rules vary by agent.
 
 `.codex` itself must be a real directory. Skill links must point directly to
 canonical targets; chained links are rejected. Direct links in the host skills
