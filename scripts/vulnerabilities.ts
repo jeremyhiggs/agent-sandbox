@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 
-export function checkVulnerabilities(report: string): void {
+export function checkVulnerabilities(
+  report: string,
+  log: (message: string) => void = console.log,
+): void {
   const results = JSON.parse(readFileSync(report, "utf8")) as {
     Results?: {
       Type: string;
@@ -19,11 +22,11 @@ export function checkVulnerabilities(report: string): void {
         if (vulnerability.FixedVersion) fixable++;
       }
     }
-    console.log(
+    log(
       `${result.Type}: ${JSON.stringify(counts)}; fixable HIGH/CRITICAL: ${fixable}`,
     );
   }
-  console.log(`Complete report: ${report}`);
+  log(`Complete report: ${report}`);
   if (blocked)
     throw new Error(
       `Vulnerability gate failed: ${blocked} HIGH/CRITICAL package findings`,

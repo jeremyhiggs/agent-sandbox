@@ -201,7 +201,7 @@ export function withSymlinkTargets(paths: string[], home?: string): string[] {
 
 type Mount = { source: string; readonly: boolean };
 type MountOptions = {
-  mount?: string[];
+  volume?: string[];
   "mount-codex-auth"?: boolean;
   "mount-skills"?: boolean;
 };
@@ -217,7 +217,7 @@ function directoryMount(spec: string): Mount & { target: string } {
     !["ro", "rw"].includes(access) ||
     /[,\n]/.test(spec)
   )
-    throw new Error("--mount requires SOURCE:/absolute/TARGET:ro|rw");
+    throw new Error("--volume requires SOURCE:/absolute/TARGET:ro|rw");
   return {
     source: resolve(source),
     target: posix.resolve(target),
@@ -287,7 +287,7 @@ export function mountPlan(
     mount.readonly ||= inherited === true;
     if (inherited !== mount.readonly) plan.set(path, mount);
   }
-  for (const spec of options.mount ?? []) {
+  for (const spec of options.volume ?? []) {
     const { target, readonly, source: requested } = directoryMount(spec);
     if (!directory(requested))
       throw new Error(
@@ -335,7 +335,7 @@ export function mountPlan(
         (path) => inside(target, path) || inside(path, target),
       )
     )
-      throw new Error(`Mount target overlaps another mount: ${target}`);
+      throw new Error(`Mount target overlaps another volume: ${target}`);
     plan.set(target, { source, readonly });
   }
   return new Map([...plan].sort(([a], [b]) => a.localeCompare(b)));
@@ -386,10 +386,11 @@ export type Options = {
   engine?: string;
   profile?: string;
   prompt?: string;
-  mount?: string[];
+  volume?: string[];
   "mount-codex-auth"?: boolean;
   "mount-skills"?: boolean;
   detach?: boolean;
+  json?: boolean;
   rm?: boolean;
   terminal?: string;
   "hc-session"?: string;
@@ -603,16 +604,17 @@ export function stop(name: string, remove = false): void {
   }
 }
 
-export function prepareBuild(): string {
+export function prepareBuild(stdout: 1 | 2 = 1): string {
   execFileSync("node", [join(ROOT, "scripts", "check-locks.ts")], {
-    stdio: "inherit",
+    stdio: ["inherit", stdout, 2],
   });
-  return buildOS();
+  return buildOS(stdout);
 }
 
 export function buildImage(
   options: Pick<Options, "engine" | "profile" | "image" | "dns">,
   osArchive: string,
+  stdout: 1 | 2 = 1,
 ): void {
   const engine = options.engine ?? "container";
   const variant = options.profile ?? "base";
@@ -647,10 +649,10 @@ export function buildImage(
   if (engine === "container") args.push("--dns", options.dns ?? DEFAULT_DNS);
   else if (options.dns)
     throw new Error("Build --dns is supported only by Apple's runtime");
-  execFileSync(engine, [...args, ROOT], { stdio: "inherit" });
+  execFileSync(engine, [...args, ROOT], { stdio: ["inherit", stdout, 2] });
 }
 
-function scan(engine: string, image: string): void {
+function scan(engine: string, image: string, json = false): string {
   const artifacts = join(ROOT, ".artifacts");
   mkdirSync(artifacts, { recursive: true });
   const temp = mkdtempSync(join(tmpdir(), "codex-image-"));
@@ -685,15 +687,26 @@ function scan(engine: string, image: string): void {
       "--exit-code",
       "0",
     ]);
-    checkVulnerabilities(report);
+    try {
+      checkVulnerabilities(report, json ? console.error : console.log);
+    } catch (error) {
+      throw Object.assign(error as Error, { report });
+    }
+    return report;
   } finally {
     rmSync(temp, { recursive: true });
   }
 }
 
-async function foreground(command: string, argv: string[]): Promise<number> {
+async function foreground(
+  command: string,
+  argv: string[],
+  json = false,
+): Promise<number> {
   return await new Promise((done, reject) => {
-    const child = spawn(command, argv, { stdio: "inherit" });
+    const child = spawn(command, argv, {
+      stdio: json ? ["inherit", 2, 2] : "inherit",
+    });
     const interrupt = () => child.kill("SIGTERM");
     process.on("SIGINT", interrupt);
     process.on("SIGTERM", interrupt);
@@ -711,7 +724,7 @@ async function workload(
   argv: string[],
   options: Options,
   custom: boolean,
-): Promise<number> {
+): Promise<{ exitCode: number; terminal?: string }> {
   const { labels } = sandboxInfo(name);
   const checkout = labels[CHECKOUT_LABEL] ?? "/";
   if (options["herdr-space"]) {
@@ -722,14 +735,19 @@ async function workload(
     labels[TAB_LABEL] = target.tab;
   }
   if (custom && !options.detach && !options["herdr-space"]) {
-    return foreground("container", [
-      "exec",
-      process.stdin.isTTY && process.stdout.isTTY ? "-it" : "-i",
-      "--workdir",
-      checkout,
-      name,
-      ...argv,
-    ]);
+    const exitCode = await foreground(
+      "container",
+      [
+        "exec",
+        process.stdin.isTTY && process.stdout.isTTY ? "-it" : "-i",
+        "--workdir",
+        checkout,
+        name,
+        ...argv,
+      ],
+      options.json,
+    );
+    return { exitCode };
   }
   const terminal =
     options.terminal ??
@@ -778,8 +796,8 @@ async function workload(
       terminalID,
   );
   if (options.detach) {
-    console.log(terminalID);
-    return 0;
+    if (!options.json) console.log(terminalID);
+    return { exitCode: 0, terminal: terminalID };
   }
   const code = await foreground("container", [
     "exec",
@@ -792,7 +810,64 @@ async function workload(
   const result = JSON.parse(
     run("container", ["exec", name, "hc", "get", "--json", terminalID]),
   );
-  return result.finished_ms !== null ? (result.exit_code ?? 1) : code;
+  return {
+    exitCode: result.finished_ms !== null ? (result.exit_code ?? 1) : code,
+    terminal: terminalID,
+  };
+}
+
+const STRING_OPTIONS = [
+  "engine",
+  "image",
+  "mount-git",
+  "home",
+  "name",
+  "cpus",
+  "memory",
+  "dns",
+  "profile",
+  "agent",
+  "prompt",
+  "terminal",
+  "hc-session",
+  "herdr-space",
+  "herdr-tab",
+];
+
+// Preserve literal --json inside prompts, string values and --exec arguments,
+// including when parsing fails before an invocation can be returned.
+function jsonRequested(input: string[]): boolean {
+  for (let index = 0; index < input.length; index++) {
+    const arg = input[index];
+    if (arg === "--exec") break;
+    if (arg === "--json") return true;
+    if (arg === "--mount-git") {
+      if (input[index + 1] && !input[index + 1].startsWith("-")) index++;
+    } else if (
+      arg === "-v" ||
+      arg === "--volume" ||
+      STRING_OPTIONS.some((name) => arg === `--${name}`)
+    )
+      index++;
+  }
+  return false;
+}
+
+function jsonResult(
+  command: string,
+  data: unknown,
+  exitCode = 0,
+  error?: string,
+): void {
+  console.log(
+    JSON.stringify({
+      command,
+      ok: exitCode === 0,
+      exit_code: exitCode,
+      data,
+      ...(error ? { error: { message: error } } : {}),
+    }),
+  );
 }
 
 export function parseInvocation(input: string[]) {
@@ -836,34 +911,18 @@ export function parseInvocation(input: string[]) {
     } else flags.push(args[index]);
   }
   args = flags;
-  const names = [
-    "engine",
-    "image",
-    "mount-git",
-    "home",
-    "name",
-    "cpus",
-    "memory",
-    "dns",
-    "profile",
-    "agent",
-    "prompt",
-    "terminal",
-    "hc-session",
-    "herdr-space",
-    "herdr-tab",
-  ];
   const { values } = parseArgs({
     args,
     options: {
       ...Object.fromEntries(
-        names.map((name) => [name, { type: "string" as const }]),
+        STRING_OPTIONS.map((name) => [name, { type: "string" as const }]),
       ),
       herdr: { type: "boolean", default: false },
-      mount: { type: "string", multiple: true, default: [] },
+      volume: { type: "string", short: "v", multiple: true, default: [] },
       "mount-codex-auth": { type: "boolean", default: false },
       "mount-skills": { type: "boolean", default: false },
       detach: { type: "boolean", short: "d", default: false },
+      json: { type: "boolean", default: false },
       rm: { type: "boolean", default: false },
       help: { type: "boolean", short: "h" },
       skill: { type: "boolean" },
@@ -905,7 +964,7 @@ export function parseInvocation(input: string[]) {
     );
   if (
     command !== "run" &&
-    (options.mount?.length ||
+    (options.volume?.length ||
       options["mount-codex-auth"] ||
       options["mount-skills"] ||
       options.home ||
@@ -926,13 +985,26 @@ export function parseInvocation(input: string[]) {
     !["run", "start", "shell", "help", "skill", "version"].includes(command)
   )
     throw new Error("--detach is supported by run, start and shell");
-  for (const mount of options.mount ?? []) directoryMount(mount);
+  for (const mount of options.volume ?? []) directoryMount(mount);
   if (options.agent && !["codex", "opencode", "claude"].includes(options.agent))
     throw new Error(`Unknown agent: ${options.agent}`);
   if (options.prompt !== undefined && !options.agent)
     throw new Error("--prompt requires --agent");
   if (options.prompt !== undefined && custom)
     throw new Error("--prompt cannot combine with --exec");
+  if (options.json && command === "attach")
+    throw new Error(
+      "--json cannot attach interactively; use terminals --json to discover terminals",
+    );
+  if (
+    options.json &&
+    ["run", "start", "shell"].includes(command) &&
+    !options.detach &&
+    (!custom || options["herdr-space"])
+  )
+    throw new Error(
+      "--json managed launches require --detach; use --exec for a foreground command",
+    );
   if (options.engine && !["container", "docker"].includes(options.engine))
     throw new Error("Engine must be container or docker");
   if (options.engine === "docker" && !["build", "scan"].includes(command))
@@ -968,27 +1040,40 @@ export function parseInvocation(input: string[]) {
 }
 
 async function main(): Promise<void> {
-  const {
-    command,
-    options,
-    argv,
-    name: existing,
-    custom,
-  } = parseInvocation(process.argv.slice(2));
-  if (command === "version") {
-    console.log(
-      `agent-sandbox ${JSON.parse(readFileSync(join(ROOT, "package.json"), "utf8")).version}`,
-    );
-    return;
-  }
-  if (command === "skill") {
-    process.stdout.write(
-      readFileSync(join(ROOT, "skills", "agent-sandbox", "SKILL.md"), "utf8"),
-    );
-    return;
-  }
-  if (command === "help") {
-    console.log(`Usage: agent-sandbox COMMAND [options] [--exec COMMAND ARG...]
+  const input = process.argv.slice(2);
+  let command = input[0]?.startsWith("-") ? "unknown" : (input[0] ?? "help");
+  try {
+    const {
+      command: selectedCommand,
+      options,
+      argv,
+      name: existing,
+      custom,
+    } = parseInvocation(input);
+    command = selectedCommand;
+    const respond = (data: unknown, exitCode = 0) => {
+      process.exitCode = exitCode;
+      if (options.json) jsonResult(command, data, exitCode);
+    };
+    if (command === "version") {
+      const { name, version } = JSON.parse(
+        readFileSync(join(ROOT, "package.json"), "utf8"),
+      );
+      if (!options.json) console.log(`${name} ${version}`);
+      respond({ name, version });
+      return;
+    }
+    if (command === "skill") {
+      const text = readFileSync(
+        join(ROOT, "skills", "agent-sandbox", "SKILL.md"),
+        "utf8",
+      );
+      if (!options.json) process.stdout.write(text);
+      respond({ text });
+      return;
+    }
+    if (command === "help") {
+      const text = `Usage: agent-sandbox COMMAND [options] [--exec COMMAND ARG...]
 run --name NAME                Create a persistent sandbox and open its shell/agent
 start --name NAME              Restart a stopped sandbox and open a new shell/agent
 shell --name NAME              Open another shell/agent in a running sandbox
@@ -1001,6 +1086,7 @@ build / scan                  Build or scan images
   --agent codex|opencode|claude    Select initial image (run) and program
   --prompt TEXT                  Interactive initial prompt; requires --agent
   -d, --detach                   Return immediately without attaching (opt-in)
+  --json                         One JSON result on stdout; progress/workload output on stderr
   --skill                        Agent guidance and recommended workflows
   -V, --version                  Print the installed CLI version
   --rm                           Remove when the sandbox stops; chosen with run
@@ -1012,83 +1098,130 @@ build / scan                  Build or scan images
   --mount-git [PATH]              Share a checkout and Git metadata; start at its root (default: current checkout)
   --mount-codex-auth              Mount only host Codex auth.json read-only
   --mount-skills                  Share host agent skills read-only
-  --mount SOURCE:TARGET:ro|rw      Share a directory at an absolute guest path (repeatable)
+  -v, --volume SOURCE:TARGET:ro|rw  Share a directory at an absolute guest path (repeatable)
 Creation: --home PATH --image TAG --dns IP --cpus N --memory 4G
-Without --mount-git, workloads start in /workspace; --mount does not select the working directory.
+Without --mount-git, workloads start in /workspace; --volume does not select the working directory.
 By default /workspace is guest-local; a directory mounted there becomes the starting location.
 Build/scan: --engine container|docker --profile base|codex|opencode|claude
 Foreground is the default. For hc supervision, launch directly from its host terminal with --detach --prompt.
 Exiting or detaching any terminal leaves its sandbox running. Bare invocation prints help.
 Agent? Run: agent-sandbox --skill
-Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`);
-    return;
-  }
-  if (command === "status") {
-    for (const item of JSON.parse(
-      run("container", ["ls", "--all", "--format", "json"]),
-    ))
-      if (
-        item.configuration.labels?.[LABEL] === "true" ||
-        item.configuration.labels?.[LEGACY_LABEL] === "true"
-      )
-        console.log(`${item.configuration.id}\t${item.status.state}`);
-    return;
-  }
-  if (command === "stop" || command === "delete") {
-    stop(existing!, command === "delete");
-    return;
-  }
-  if (command === "terminals") {
-    sandboxInfo(existing!);
-    process.stdout.write(
-      run("container", ["exec", existing!, "hc", "ls", "--all", "--json"]),
+JSON managed launches require --detach; interactive attach is unavailable in JSON mode.
+Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
+      if (!options.json) console.log(text);
+      respond({ text });
+      return;
+    }
+    if (command === "status") {
+      const sandboxes: { name: string; state: string }[] = [];
+      for (const item of JSON.parse(
+        run("container", ["ls", "--all", "--format", "json"]),
+      ))
+        if (
+          item.configuration.labels?.[LABEL] === "true" ||
+          item.configuration.labels?.[LEGACY_LABEL] === "true"
+        ) {
+          sandboxes.push({
+            name: item.configuration.id,
+            state: item.status.state,
+          });
+          if (!options.json)
+            console.log(`${item.configuration.id}\t${item.status.state}`);
+        }
+      respond({ sandboxes });
+      return;
+    }
+    if (command === "stop" || command === "delete") {
+      stop(existing!, command === "delete");
+      respond({ name: existing });
+      return;
+    }
+    if (command === "terminals") {
+      sandboxInfo(existing!);
+      const text = run("container", [
+        "exec",
+        existing!,
+        "hc",
+        "ls",
+        "--all",
+        "--json",
+      ]);
+      if (!options.json) process.stdout.write(text);
+      respond({ ...JSON.parse(text), name: existing });
+      return;
+    }
+    if (command === "build") {
+      const stdout = options.json ? 2 : 1;
+      const archive = prepareBuild(stdout);
+      buildImage(options, archive, stdout);
+      respond({
+        engine: options.engine ?? "container",
+        profile: options.profile ?? "base",
+        image: options.image ?? `agent-sandbox:${options.profile ?? "base"}`,
+      });
+      return;
+    }
+    if (command === "scan") {
+      const engine = options.engine ?? "container";
+      const image =
+        options.image ??
+        `agent-sandbox:${options.agent ?? options.profile ?? "base"}`;
+      const report = scan(engine, image, options.json);
+      respond({ engine, image, report });
+      return;
+    }
+    if (
+      !options.detach &&
+      (!custom || options["herdr-space"]) &&
+      (!process.stdin.isTTY || !process.stdout.isTTY)
+    )
+      throw new Error(
+        "Interactive terminals require a TTY; use --detach or --exec for scripts and pipes",
+      );
+    if (command === "attach") {
+      sandboxInfo(existing!);
+      process.exitCode = await foreground("container", [
+        "exec",
+        "-it",
+        existing!,
+        "hc",
+        "attach",
+        options.terminal!,
+      ]);
+      return;
+    }
+    let name = existing!;
+    if (command === "run") {
+      name = createSandbox(options);
+    } else if (command === "start") {
+      const { labels } = sandboxInfo(name);
+      run("container", ["start", name]);
+      registerSandbox(name, labels);
+    } else if (command === "shell") {
+      sandboxInfo(name);
+    }
+    const result = await workload(name, argv, options, custom);
+    respond(
+      {
+        name,
+        detached: !!options.detach,
+        ...(result.terminal
+          ? { terminal: result.terminal, address: `${name}/${result.terminal}` }
+          : {}),
+      },
+      result.exitCode,
     );
-    return;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (jsonRequested(input)) {
+      const data =
+        error && typeof error === "object" && "report" in error
+          ? { report: error.report }
+          : null;
+      jsonResult(command, data, 1, message);
+    } else console.error(message);
+    process.exitCode = 1;
   }
-  if (command === "build") {
-    const archive = prepareBuild();
-    buildImage(options, archive);
-    return;
-  }
-  if (command === "scan") {
-    scan(
-      options.engine ?? "container",
-      options.image ??
-        `agent-sandbox:${options.agent ?? options.profile ?? "base"}`,
-    );
-    return;
-  }
-  if (
-    !options.detach &&
-    (!custom || options["herdr-space"]) &&
-    (!process.stdin.isTTY || !process.stdout.isTTY)
-  )
-    throw new Error(
-      "Interactive terminals require a TTY; use --detach or --exec for scripts and pipes",
-    );
-  if (command === "attach") {
-    sandboxInfo(existing!);
-    process.exitCode = await foreground("container", [
-      "exec",
-      "-it",
-      existing!,
-      "hc",
-      "attach",
-      options.terminal!,
-    ]);
-    return;
-  }
-  let name = existing!;
-  if (command === "run") {
-    name = createSandbox(options);
-  } else if (command === "start") {
-    const { labels } = sandboxInfo(name);
-    run("container", ["start", name]);
-    registerSandbox(name, labels);
-  } else if (command === "shell") {
-    sandboxInfo(name);
-  }
-  process.exitCode = await workload(name, argv, options, custom);
 }
 
 if (

@@ -93,6 +93,58 @@ try {
   );
   assert.equal(readFileSync(join(work, ".git"), "utf8"), gitPointer);
   destroy(guestName("shell"));
+  const jsonGuest = guestName("json");
+  const createdJSON = JSON.parse(launch("json", ["--json", "--detach"]));
+  assert.equal(
+    createdJSON.data.address,
+    `${jsonGuest}/${createdJSON.data.terminal}`,
+  );
+  const listedJSON = JSON.parse(
+    invoke(["terminals", "--name", jsonGuest, "--json"]),
+  );
+  assert.ok(
+    listedJSON.data.terminals.some(
+      (terminal: { address: string }) =>
+        terminal.address === createdJSON.data.terminal,
+    ),
+  );
+  const directJSON = spawnSync(
+    binary,
+    [
+      ...prefix,
+      "shell",
+      "--name",
+      jsonGuest,
+      "--json",
+      "--exec",
+      "sh",
+      "-c",
+      "cat; printf json-stderr >&2; exit 7",
+    ],
+    {
+      cwd: work,
+      encoding: "utf8",
+      input: "json-stdin",
+    },
+  );
+  assert.equal(directJSON.status, 7);
+  assert.equal(JSON.parse(directJSON.stdout).exit_code, 7);
+  assert.match(directJSON.stderr, /json-stdin/);
+  assert.match(directJSON.stderr, /json-stderr/);
+  assert.equal(
+    JSON.parse(invoke(["stop", "--name", jsonGuest, "--json"])).ok,
+    true,
+  );
+  const restartedJSON = JSON.parse(
+    invoke(["start", "--name", jsonGuest, "--json", "--detach"]),
+  );
+  assert.equal(restartedJSON.data.name, jsonGuest);
+  assert.ok(restartedJSON.data.terminal);
+  assert.equal(
+    JSON.parse(invoke(["delete", "--name", jsonGuest, "--json"])).ok,
+    true,
+  );
+  names.delete(jsonGuest);
   const dataRW = join(root, "data rw"),
     dataRO = join(root, "data ro");
   mkdirSync(dataRW);
@@ -100,9 +152,9 @@ try {
   writeFileSync(join(dataRO, "input.txt"), "read only input");
   const directoryGuest = guestName("directories");
   launch("directories", [
-    "--mount",
+    "--volume",
     `${dataRW}:/workspace/output:rw`,
-    "--mount",
+    "--volume",
     `${dataRO}:/data/input/:ro`,
     "--exec",
     "node",

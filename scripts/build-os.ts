@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 
-export function buildOS(): string {
+export function buildOS(stdout: 1 | 2 = 1): string {
   const root = join(import.meta.dirname, "..");
   const arch =
     process.arch === "arm64"
@@ -39,7 +39,7 @@ export function buildOS(): string {
         "agent-sandbox:os",
         output,
       ],
-      { cwd: root, stdio: "inherit" },
+      { cwd: root, stdio: ["inherit", stdout, 2] },
     );
     function blob(digest: string): string {
       assert.match(digest, /^sha256:[a-f0-9]{64}$/);

@@ -44,6 +44,15 @@ It uses the caller's hc core by default; `--hc-session default` explicitly
 selects the core normally shown by the app. Creation preserves the selected
 space. Without Herdr integration, no host hc installation is required.
 
+For machine-readable command results, add `--json` before `--exec`. Stdout then
+contains one `{command, ok, exit_code, data}` object; progress and foreground
+workload output stream to stderr. Use explicit `--detach` for managed JSON
+launches and read `data.terminal` or `data.address` from the result. JSON never
+implies detach. Foreground `--exec` preserves stdin and the workload exit code.
+Interactive `attach --json` returns a structured error; use plain `attach` or
+discover terminals with `terminals --json`. Launcher errors include
+`error.message`; `status --json` lists sandbox names and states.
+
 ## Sharing and agent choice
 
 Nothing is mounted by default. Recommend only the mounts needed for the task:
@@ -61,7 +70,8 @@ Nothing is mounted by default. Recommend only the mounts needed for the task:
 - `--mount-skills` shares agent skills read-only. Existing settings and skills
   can reference host-only programs that need Linux equivalents.
 
-`--mount SOURCE:TARGET:ro|rw` adds an ordinary directory share and is repeatable.
+`--volume SOURCE:TARGET:ro|rw` (or `-v`) adds a directory share and is repeatable,
+using the colon-separated volume syntax of Apple Container and Docker.
 Require existing host directories, absolute guest targets and an explicit access
 mode. Prefer `ro` for reference inputs. Quote arguments with spaces. Targets must
 not overlap other mounts or reserved runtime paths; the host home cannot be

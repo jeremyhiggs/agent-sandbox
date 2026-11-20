@@ -45,14 +45,19 @@ test("directory mounts preserve multiple explicit destinations and access modes"
       "test",
       "--mount-codex-auth",
       "--mount-skills",
-      "--mount",
+      "-v",
       `${a}:/workspace/repo:rw`,
-      "--mount",
+      "--volume",
       `${b}:/data:ro`,
     ]).options;
     assert.equal(options["mount-codex-auth"], true);
     assert.equal(options["mount-skills"], true);
-    const plan = mountPlan(undefined, home, { mount: options.mount });
+    assert.throws(
+      () =>
+        parseInvocation(["run", "--name", "test", "--mount", `${a}:/data:ro`]),
+      /Unknown option/,
+    );
+    const plan = mountPlan(undefined, home, { volume: options.volume });
     assert.deepEqual(
       [...plan.entries()],
       [
@@ -67,32 +72,32 @@ test("directory mounts preserve multiple explicit destinations and access modes"
       `${a}:/data:bad`,
     ]) {
       assert.throws(
-        () => parseInvocation(["run", "--name", "test", "--mount", spec]),
-        /mount/i,
+        () => parseInvocation(["run", "--name", "test", "--volume", spec]),
+        /volume/i,
       );
     }
     assert.throws(
       () =>
         mountPlan(undefined, home, {
-          mount: [`${a}:/data:ro`, `${b}:/data/child:rw`],
+          volume: [`${a}:/data:ro`, `${b}:/data/child:rw`],
         }),
       /overlap|conflict/i,
     );
     assert.throws(
-      () => mountPlan(undefined, home, { mount: [`${home}:/data:ro`] }),
+      () => mountPlan(undefined, home, { volume: [`${home}:/data:ro`] }),
       /host home/i,
     );
     assert.throws(
-      () => mountPlan(undefined, home, { mount: [`${homedir()}:/data:ro`] }),
+      () => mountPlan(undefined, home, { volume: [`${homedir()}:/data:ro`] }),
       /host home/i,
     );
     writeFileSync(join(root, "file"), "file");
     assert.throws(
-      () => mountPlan(undefined, home, { mount: [`${root}/file:/data:ro`] }),
+      () => mountPlan(undefined, home, { volume: [`${root}/file:/data:ro`] }),
       /directory/i,
     );
     assert.throws(
-      () => mountPlan(undefined, home, { mount: [`${a}:/proc:rw`] }),
+      () => mountPlan(undefined, home, { volume: [`${a}:/proc:rw`] }),
       /reserved|runtime/i,
     );
   }));
@@ -149,14 +154,14 @@ test("directory targets normalize trailing slashes before home and overlap check
     mkdirSync(data);
     for (const target of [home, home + "/"]) {
       assert.throws(
-        () => mountPlan(undefined, home, { mount: [`${data}:${target}:rw`] }),
+        () => mountPlan(undefined, home, { volume: [`${data}:${target}:rw`] }),
         /reserved/,
       );
     }
     assert.deepEqual(
       [
         ...mountPlan(undefined, home, {
-          mount: [`${data}:/reference/:ro`],
+          volume: [`${data}:/reference/:ro`],
         }).keys(),
       ],
       ["/reference"],
@@ -164,7 +169,7 @@ test("directory targets normalize trailing slashes before home and overlap check
     assert.throws(
       () =>
         mountPlan(undefined, home, {
-          mount: [`${data}:/reference/:ro`, `${data}:/reference:rw`],
+          volume: [`${data}:/reference/:ro`, `${data}:/reference:rw`],
         }),
       /overlap/,
     );
@@ -182,33 +187,36 @@ test("directory aliases cannot widen Codex auth or write through shared skills",
     const auth = { "mount-codex-auth": true };
     assert.throws(
       () =>
-        mountPlan(undefined, home, { ...auth, mount: [`${codex}:/alias:ro`] }),
+        mountPlan(undefined, home, { ...auth, volume: [`${codex}:/alias:ro`] }),
       /Codex state/,
     );
     const link = join(root, "auth-alias");
     symlinkSync(codex, link);
     assert.throws(
       () =>
-        mountPlan(undefined, home, { ...auth, mount: [`${link}:/alias:rw`] }),
+        mountPlan(undefined, home, { ...auth, volume: [`${link}:/alias:rw`] }),
       /Codex state/,
     );
     assert.throws(
       () =>
-        mountPlan(undefined, home, { ...auth, mount: [`${data}:${codex}:rw`] }),
+        mountPlan(undefined, home, {
+          ...auth,
+          volume: [`${data}:${codex}:rw`],
+        }),
       /reserved/,
     );
     assert.throws(
       () =>
         mountPlan(undefined, home, {
           "mount-skills": true,
-          mount: [`${join(home, ".agents")}:/alias:rw`],
+          volume: [`${join(home, ".agents")}:/alias:rw`],
         }),
       /read-only shared skills/,
     );
     const normal = mountPlan(undefined, home, {
       ...auth,
       "mount-skills": true,
-      mount: [`${data}:/data:rw`],
+      volume: [`${data}:/data:rw`],
     });
     assert.equal(normal.get(join(codex, "auth.json"))?.readonly, true);
     assert.equal(normal.get("/data")?.readonly, false);
@@ -228,7 +236,7 @@ test("case aliases cannot expose protected host directories", (t) =>
       return;
     }
     assert.throws(
-      () => mountPlan(undefined, home, { mount: [`${root}/HOME:/alias:ro`] }),
+      () => mountPlan(undefined, home, { volume: [`${root}/HOME:/alias:ro`] }),
       /host home/,
     );
     for (const path of [".CODEX", ".CODEX/sessions"]) {
@@ -236,7 +244,7 @@ test("case aliases cannot expose protected host directories", (t) =>
         () =>
           mountPlan(undefined, home, {
             "mount-codex-auth": true,
-            mount: [`${home}/${path}:/alias:rw`],
+            volume: [`${home}/${path}:/alias:rw`],
           }),
         /Codex state/,
       );
@@ -246,13 +254,13 @@ test("case aliases cannot expose protected host directories", (t) =>
         () =>
           mountPlan(undefined, home, {
             "mount-skills": true,
-            mount: [`${home}/${path}:/alias:rw`],
+            volume: [`${home}/${path}:/alias:rw`],
           }),
         /read-only shared skills/,
       );
     }
     const targets = mountPlan(undefined, home, {
-      mount: [`${skills}:/Input:ro`, `${skills}:/input:ro`],
+      volume: [`${skills}:/Input:ro`, `${skills}:/input:ro`],
     });
     assert.equal(targets.size, 2);
     mkdirSync(join(skills, "shared"));
@@ -662,7 +670,7 @@ test("--skill reads the bundled guidance outside a checkout without host tools",
 test("--mount-git opts into sharing the current or specified checkout", () => {
   const args = ["run", "--name", "feature"];
   assert.equal(parseInvocation(args).options["mount-git"], undefined);
-  assert.deepEqual(parseInvocation(args).options.mount, []);
+  assert.deepEqual(parseInvocation(args).options.volume, []);
   assert.equal(
     parseInvocation([...args, "--mount-git"]).options["mount-git"],
     ".",
@@ -698,8 +706,8 @@ test("--mount-git opts into sharing the current or specified checkout", () => {
     /Unknown option/,
   );
   assert.throws(
-    () => parseInvocation([...args, "--mount", "git"]),
-    /--mount requires/,
+    () => parseInvocation([...args, "--volume", "git"]),
+    /--volume requires/,
   );
   assert.throws(
     () => parseInvocation([...args, "--mount-git="]),
@@ -799,8 +807,8 @@ test("base mount plan exposes no host checkout or agent credentials", () =>
 test("unverified agent state mounts are rejected while agent launches remain available", () => {
   for (const agent of ["claude", "opencode"] as const) {
     assert.throws(
-      () => parseInvocation(["run", "--name", "test", "--mount", agent]),
-      /--mount requires/,
+      () => parseInvocation(["run", "--name", "test", "--volume", agent]),
+      /--volume requires/,
     );
     assert.equal(
       parseInvocation(["run", "--name", "test", "--agent", agent]).options
@@ -837,7 +845,7 @@ test("host state and skills are opt-in independently of agent selection", () =>
     assert.equal(selected.get(skills)?.readonly, true);
     assert.deepEqual(
       parseInvocation(["run", "--name", "test", "--agent", "codex"]).options
-        .mount,
+        .volume,
       [],
     );
     const explicit = parseInvocation([
@@ -852,8 +860,8 @@ test("host state and skills are opt-in independently of agent selection", () =>
     assert.equal(explicit["mount-codex-auth"], true);
     assert.equal(explicit["mount-skills"], true);
     assert.throws(
-      () => parseInvocation(["run", "--name", "test", "--mount", "all"]),
-      /--mount requires/,
+      () => parseInvocation(["run", "--name", "test", "--volume", "all"]),
+      /--volume requires/,
     );
   }));
 
@@ -883,7 +891,7 @@ test("named persistent lifecycle and independent terminals have explicit targets
     /--terminal must/,
   );
   assert.throws(
-    () => parseInvocation(["shell", "--name", "feature", "--mount", "codex"]),
+    () => parseInvocation(["shell", "--name", "feature", "--volume", "codex"]),
     /chosen at creation/,
   );
   const parsed = parseInvocation([
