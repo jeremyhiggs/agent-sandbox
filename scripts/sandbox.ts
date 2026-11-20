@@ -57,6 +57,20 @@ function inside(path: string, parent: string): boolean {
     path.startsWith(parent.endsWith(sep) ? parent : parent + sep)
   );
 }
+// Host volumes may ignore case even though the Linux guest does not.
+// realpathSync resolves links but does not normalize pathname case.
+function hostInside(path: string, parent: string): boolean {
+  const root = statSync(parent, { bigint: true, throwIfNoEntry: false });
+  if (!root) return false;
+  let current = path;
+  while (true) {
+    const entry = statSync(current, { bigint: true, throwIfNoEntry: false });
+    if (entry?.dev === root.dev && entry.ino === root.ino) return true;
+    const next = dirname(current);
+    if (next === current) return false;
+    current = next;
+  }
+}
 function file(path: string): boolean {
   return existsSync(path) && lstatSync(path).isFile();
 }
@@ -134,7 +148,7 @@ function directSymlinkTarget(path: string): string {
 export function withSymlinkTargets(paths: string[], home?: string): string[] {
   const mounts = new Set<string>();
   function approve(path: string) {
-    if (home && inside(home, path))
+    if (home && hostInside(home, path))
       throw new Error(`Refusing a mount that exposes host home: ${path}`);
     mounts.add(path);
   }
@@ -161,7 +175,11 @@ export function withSymlinkTargets(paths: string[], home?: string): string[] {
     const info = lstatSync(path);
     if (info.isSymbolicLink()) {
       const target = directSymlinkTarget(path);
-      if (![...mounts].some((root) => inside(target, root)))
+      if (
+        ![...mounts].some(
+          (root) => inside(target, root) && hostInside(target, root),
+        )
+      )
         throw new Error(
           `Nested skill symlink points outside approved skill roots: ${path}`,
         );
@@ -228,7 +246,7 @@ export function mountPlan(
       );
     if (
       [...mounts.keys()].some(
-        (path) => inside(codex, path) || inside(path, codex),
+        (path) => hostInside(codex, path) || hostInside(path, codex),
       )
     )
       throw new Error(
@@ -250,7 +268,10 @@ export function mountPlan(
     for (const path of skillRoots)
       mounts.set(path, { source: path, readonly: true });
   }
-  if (options["mount-codex-auth"] && mounts.has(codex))
+  if (
+    options["mount-codex-auth"] &&
+    skillRoots.some((root) => hostInside(codex, root))
+  )
     throw new Error(
       "The host Codex directory cannot also be a shared skill root",
     );
@@ -258,7 +279,7 @@ export function mountPlan(
   for (const [path, mount] of [...mounts.entries()].sort(
     ([a], [b]) => a.length - b.length,
   )) {
-    if (inside(home, path) || inside(hostHome, path))
+    if (hostInside(home, path) || hostInside(hostHome, path))
       throw new Error(`Refusing to expose host home: ${path}`);
     const inherited = [...plan.entries()]
       .filter(([parent]) => inside(path, parent))
@@ -273,18 +294,20 @@ export function mountPlan(
         `Mount source must be an existing directory: ${requested}`,
       );
     const source = realpathSync(requested);
-    if (inside(home, source) || inside(hostHome, source))
+    if (hostInside(home, source) || hostInside(hostHome, source))
       throw new Error(`Refusing to expose host home: ${source}`);
     if (
       options["mount-codex-auth"] &&
-      (inside(codex, source) || inside(source, codex))
+      (hostInside(codex, source) || hostInside(source, codex))
     )
       throw new Error(
         "Directory mounts cannot expose host Codex state with --mount-codex-auth",
       );
     if (
       !readonly &&
-      skillRoots.some((root) => inside(source, root) || inside(root, source))
+      skillRoots.some(
+        (root) => hostInside(source, root) || hostInside(root, source),
+      )
     )
       throw new Error(
         "A writable directory mount cannot also expose read-only shared skills",

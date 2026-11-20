@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -211,6 +212,58 @@ test("directory aliases cannot widen Codex auth or write through shared skills",
     });
     assert.equal(normal.get(join(codex, "auth.json"))?.readonly, true);
     assert.equal(normal.get("/data")?.readonly, false);
+  }));
+
+test("case aliases cannot expose protected host directories", (t) =>
+  fixture((root) => {
+    const home = join(root, "home"),
+      codex = join(home, ".codex"),
+      skills = join(home, ".agents", "skills");
+    for (const path of [codex, skills]) mkdirSync(path, { recursive: true });
+    writeFileSync(join(codex, "auth.json"), "{}");
+    mkdirSync(join(codex, "sessions"));
+    mkdirSync(join(skills, "review"));
+    if (!existsSync(join(root, "HOME"))) {
+      t.skip("Requires a case-insensitive filesystem");
+      return;
+    }
+    assert.throws(
+      () => mountPlan(undefined, home, { mount: [`${root}/HOME:/alias:ro`] }),
+      /host home/,
+    );
+    for (const path of [".CODEX", ".CODEX/sessions"]) {
+      assert.throws(
+        () =>
+          mountPlan(undefined, home, {
+            "mount-codex-auth": true,
+            mount: [`${home}/${path}:/alias:rw`],
+          }),
+        /Codex state/,
+      );
+    }
+    for (const path of [".AGENTS", ".AGENTS/skills", ".AGENTS/skills/review"]) {
+      assert.throws(
+        () =>
+          mountPlan(undefined, home, {
+            "mount-skills": true,
+            mount: [`${home}/${path}:/alias:rw`],
+          }),
+        /read-only shared skills/,
+      );
+    }
+    const targets = mountPlan(undefined, home, {
+      mount: [`${skills}:/Input:ro`, `${skills}:/input:ro`],
+    });
+    assert.equal(targets.size, 2);
+    mkdirSync(join(skills, "shared"));
+    symlinkSync(
+      join(root, "HOME", ".agents", "skills", "shared"),
+      join(skills, "review", "nested"),
+    );
+    assert.throws(
+      () => mountPlan(undefined, home, { "mount-skills": true }),
+      /Nested skill symlink/,
+    );
   }));
 
 test("linked worktree mounts checkout and common Git directory without main checkout", () =>
