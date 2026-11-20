@@ -1,15 +1,18 @@
 # Changelog
 
-## 0.1.0 (unreleased)
+## 0.1.0
 
 Initial version of `agent-sandbox` for Apple silicon Macs using Apple's container runtime.
 
 - Persistent, named sandboxes with foreground attachment, optional detach,
   independent terminals, shell/exec access, restart, and deletion.
+- `--json` command results with sandbox/terminal metadata, structured errors and
+  preserved foreground exit codes. Progress and workload output stay on stderr;
+  managed JSON launches require `--detach` and interactive attachment stays in text mode.
 - A Wolfi base with mise, pnpm, Git, GitHub CLI, hc, agent-browser, and Chrome.
   Separate Codex, OpenCode, and Claude Code images share that base.
 - Dedicated `--mount-git`, `--mount-codex-auth`, and `--mount-skills` helpers,
-  plus repeatable directory mounts with explicit guest targets and `ro`/`rw`
+  plus repeatable `--volume` / `-v` directory mounts with explicit guest targets and `ro`/`rw`
   access. Workloads start at the selected checkout root, or `/workspace` by default.
   No host checkout or credentials are mounted by default.
 - Optional Herdr spaces and native hc parent reporting without a shared host socket.
@@ -23,7 +26,7 @@ Initial version of `agent-sandbox` for Apple silicon Macs using Apple's containe
 Codex SQLite databases stay guest-local. Goals and memory-processing state are
 lost on deletion; shared transcript and memory files do not restore every record.
 The host orchestrator must verify and save outcomes before teardown.
-See [state ownership and handoff](README.md#worker-handoff) for the reason and procedure.
+See [state ownership and handoff](docs/herdr.md#worker-handoff) for the reason and procedure.
 
 Guest launches require Apple's runtime; Docker is supported for image builds and
 scans in CI. The amd64 OpenCode image requires AVX2; arm64 is unaffected.
