@@ -375,6 +375,8 @@ function requireName(name: string): string {
 }
 export type Options = {
   "mount-git"?: string;
+  "git-name"?: string;
+  "git-email"?: string;
   home?: string;
   name?: string;
   image?: string;
@@ -446,6 +448,65 @@ function sameTransport(
   return machine.via === true && machine.target === via;
 }
 
+function gitIdentityEnvironment(
+  checkout: string | undefined,
+  options: Options,
+): string[] {
+  const values: string[] = [];
+  const env = { ...process.env };
+  for (const key of [
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_COMMON_DIR",
+    "GIT_INDEX_FILE",
+  ])
+    delete env[key];
+  let unavailable = false;
+  for (const role of ["AUTHOR", "COMMITTER"]) {
+    let name = options["git-name"],
+      email = options["git-email"];
+    if (checkout && (name === undefined || email === undefined)) {
+      if (name !== undefined) env[`GIT_${role}_NAME`] = name;
+      if (email !== undefined) env[`GIT_${role}_EMAIL`] = email;
+      try {
+        const identity = execFileSync(
+          "git",
+          [
+            "-C",
+            checkout,
+            "-c",
+            "user.useConfigOnly=true",
+            "var",
+            `GIT_${role}_IDENT`,
+          ],
+          {
+            env,
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+          },
+        ).trimEnd();
+        const match = identity.match(/^(.*) <([^<>]*)> -?\d+ [+-]\d{4}$/);
+        if (!match)
+          throw new Error(
+            `Unexpected host Git ${role.toLowerCase()} identity format`,
+          );
+        name ??= match[1];
+        email ??= match[2];
+      } catch (error) {
+        if ((error as { status?: number }).status !== 128) throw error;
+        unavailable = true;
+      }
+    }
+    if (name !== undefined) values.push(`GIT_${role}_NAME=${name}`);
+    if (email !== undefined) values.push(`GIT_${role}_EMAIL=${email}`);
+  }
+  if (unavailable)
+    console.error(
+      "Host Git identity is unavailable; configure it on the host or use --git-name and --git-email.",
+    );
+  return values;
+}
+
 function sandboxInfo(name: string) {
   requireName(name);
   const info = JSON.parse(run("container", ["inspect", name]))[0];
@@ -495,6 +556,7 @@ export function createSandbox(options: Options): string {
   const workdir = checkout ?? "/workspace";
   const home = realpathSync(options.home ?? homedir());
   const mounts = mountPlan(checkout, home, options);
+  const identity = gitIdentityEnvironment(checkout, options);
   const codex = join(home, ".codex");
   const sharedCodex = options["mount-codex-auth"];
   const container = executable("container");
@@ -538,6 +600,7 @@ export function createSandbox(options: Options): string {
     args.push("--label", `${key}=${value}`);
   if (options.rm) args.push("--rm");
   args.push("--env", `CODEX_HOME=${codex}`);
+  for (const value of identity) args.push("--env", value);
   console.error(`Starting ${name}; host mounts:`);
   for (const [target, { source, readonly }] of mounts) {
     if (/[:,\n]/.test(source) || /[:,\n]/.test(target))
@@ -844,6 +907,8 @@ const STRING_OPTIONS = [
   "engine",
   "image",
   "mount-git",
+  "git-name",
+  "git-email",
   "home",
   "name",
   "cpus",
@@ -986,6 +1051,18 @@ export function parseInvocation(input: string[]) {
     throw new Error(
       "--herdr-space selects a terminal's space with shell; a new sandbox gets its own machine-scoped space",
     );
+  for (const key of ["git-name", "git-email"] as const) {
+    const value = options[key];
+    if (value !== undefined && (!value.trim() || /[\0\r\n]/.test(value)))
+      throw new Error(
+        "Git identity values must be nonempty single-line strings",
+      );
+  }
+  if (
+    (options["git-name"] !== undefined || options["git-email"] !== undefined) &&
+    !["run", "help", "skill", "version"].includes(command)
+  )
+    throw new Error("Git identity settings are chosen at creation with run");
   if (
     command !== "run" &&
     (options.volume?.length ||
@@ -1120,6 +1197,7 @@ build / scan                  Build or scan images
   --terminal ID_OR_NAME           Name a new terminal or select one to attach
   --exec COMMAND ARG...          Literal custom command; consumes remaining arguments
   --mount-git [PATH]              Share a checkout and Git metadata; start at its root (default: current checkout)
+  --git-name NAME --git-email EMAIL   Override author/committer identity resolved from the host checkout
   --mount-codex-auth              Mount only host Codex auth.json read-only
   --mount-skills                  Share host agent skills read-only
   -v, --volume SOURCE:TARGET:ro|rw  Share a directory at an absolute guest path (repeatable)

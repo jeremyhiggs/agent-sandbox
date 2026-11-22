@@ -59,6 +59,7 @@ A bare CLI invocation prints help.
 | `--volume SOURCE:TARGET:ro\|rw` | Share a directory without changing the starting directory; mounting at `/workspace` supplies its contents there |
 | `--cpus`, `--memory`            | Default to 4 CPUs and 4 GB RAM                                                                                  |
 | `--home PATH`                   | Choose the host state/skills source; do not mount the whole home                                                |
+| `--git-name`, `--git-email`     | Override Git author and committer names/emails at creation                                                      |
 | `--dns IP` or `CONTAINER_DNS`   | Override the default `1.1.1.1` resolver for Apple builds and guests                                             |
 
 A path inside a checkout selects its root. Checkout sharing requires host Git
@@ -69,6 +70,27 @@ at creation; `shell` and `start` reuse saved settings.
 sandbox it selects only a program, which must already be installed there.
 `--prompt TEXT` supplies its initial prompt and requires `--agent`; it cannot
 combine with `--exec`.
+
+### Git commit identity
+
+With `--mount-git`, the host resolves Git's effective author and committer identity
+in that checkout. This includes repository settings, conditional includes and
+`GIT_AUTHOR_*`/`GIT_COMMITTER_*` identity variables. The resolved names and email
+addresses become guest environment variables, retained across `stop`/`start` and
+used by new shells and agents. The shared repository config is not changed.
+
+Use either flag to override that field for both author and committer, or use
+both to choose a complete identity:
+
+```sh
+agent-sandbox run --name feature --agent codex --mount-git --git-name 'Example User' --git-email user@example.invalid
+```
+
+Without `--mount-git`, identity is set only by these explicit flags. If the host
+has no configured identity, the launcher warns and leaves unavailable fields
+unset rather than guessing a name or email. These settings do not provide GitHub
+authentication or commit-signing keys. They are creation settings; create a new
+sandbox to change the saved environment.
 
 ### Foreground and detached work
 

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -86,6 +86,164 @@ function invoke(args: string[], env: NodeJS.ProcessEnv, input?: string) {
     encoding: "utf8",
   });
 }
+
+test("creation resolves host checkout identities and explicit overrides without writing Git config", () =>
+  fixture((root, inherited) => {
+    const work = join(root, "checkout");
+    const env = { ...inherited };
+    for (const key of Object.keys(env))
+      if (key.startsWith("GIT_")) delete env[key];
+    delete env.EMAIL;
+    env.GIT_CONFIG_NOSYSTEM = "1";
+    env.GIT_CONFIG_GLOBAL = join(root, "global.gitconfig");
+    const git = (...args: string[]) =>
+      execFileSync("git", args, { env, encoding: "utf8" });
+    git("init", "-q", work);
+    const metadata = git("-C", work, "rev-parse", "--absolute-git-dir").trim();
+    writeFileSync(
+      env.GIT_CONFIG_GLOBAL,
+      `[includeIf "gitdir:${metadata}"]\n  path = ${join(root, "identity.gitconfig")}\n`,
+    );
+    writeFileSync(
+      join(root, "identity.gitconfig"),
+      "[user]\n  name = Checkout User\n  email = checkout@example.invalid\n",
+    );
+    writeFileSync(join(root, "empty.gitconfig"), "");
+    const config = readFileSync(join(metadata, "config"), "utf8");
+    const hostIdentity = {
+      GIT_AUTHOR_NAME: "Host Author",
+      GIT_AUTHOR_EMAIL: "author@example.invalid",
+      GIT_COMMITTER_NAME: "Host Committer",
+      GIT_COMMITTER_EMAIL: "committer@example.invalid",
+    };
+    const cases = [
+      {
+        mount: true,
+        flags: [],
+        extra: {},
+        expected: [
+          "Checkout User",
+          "checkout@example.invalid",
+          "Checkout User",
+          "checkout@example.invalid",
+        ],
+      },
+      {
+        mount: true,
+        flags: [],
+        extra: hostIdentity,
+        expected: [
+          "Host Author",
+          "author@example.invalid",
+          "Host Committer",
+          "committer@example.invalid",
+        ],
+      },
+      {
+        mount: true,
+        flags: [
+          "--git-name",
+          "Override User",
+          "--git-email",
+          "override@example.invalid",
+        ],
+        extra: hostIdentity,
+        expected: [
+          "Override User",
+          "override@example.invalid",
+          "Override User",
+          "override@example.invalid",
+        ],
+      },
+      {
+        mount: true,
+        flags: ["--git-name", "Name Override"],
+        extra: {},
+        expected: [
+          "Name Override",
+          "checkout@example.invalid",
+          "Name Override",
+          "checkout@example.invalid",
+        ],
+      },
+      {
+        mount: true,
+        flags: ["--git-email", "email-override@example.invalid"],
+        extra: {},
+        expected: [
+          "Checkout User",
+          "email-override@example.invalid",
+          "Checkout User",
+          "email-override@example.invalid",
+        ],
+      },
+      {
+        mount: true,
+        flags: [],
+        extra: { GIT_CONFIG_GLOBAL: join(root, "empty.gitconfig") },
+        expected: [],
+      },
+      { mount: false, flags: [], extra: hostIdentity, expected: [] },
+      {
+        mount: false,
+        flags: [
+          "--git-name",
+          "Explicit User",
+          "--git-email",
+          "explicit@example.invalid",
+        ],
+        extra: {},
+        expected: [
+          "Explicit User",
+          "explicit@example.invalid",
+          "Explicit User",
+          "explicit@example.invalid",
+        ],
+      },
+    ];
+    for (const scenario of cases) {
+      writeFileSync(env.JSON_TEST_LOG!, "");
+      const result = invoke(
+        [
+          "run",
+          "--name",
+          "json-test",
+          "--home",
+          root,
+          "--detach",
+          "--json",
+          ...(scenario.mount ? ["--mount-git", work] : []),
+          ...scenario.flags,
+        ],
+        { ...env, ...scenario.extra },
+      );
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(JSON.parse(result.stdout).ok, true);
+      const launch = readFileSync(env.JSON_TEST_LOG!, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[])
+        .find((args) => args[0] === "run")!;
+      const variables = launch.flatMap((arg, i) =>
+        arg === "--env" ? [launch[i + 1]] : [],
+      );
+      const keys = [
+        "GIT_AUTHOR_NAME",
+        "GIT_AUTHOR_EMAIL",
+        "GIT_COMMITTER_NAME",
+        "GIT_COMMITTER_EMAIL",
+      ];
+      assert.deepEqual(
+        variables.filter((value) =>
+          keys.some((key) => value.startsWith(key + "=")),
+        ),
+        scenario.expected.map((value, i) => `${keys[i]}=${value}`),
+      );
+      assert.equal(readFileSync(join(metadata, "config"), "utf8"), config);
+      if (scenario.mount && !scenario.expected.length)
+        assert.match(result.stderr, /Host Git identity.*unavailable/);
+    }
+  }));
 
 test("JSON help, version, skill and parsing failures need no runtime", () => {
   const env = { ...process.env, PATH: "" };

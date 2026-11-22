@@ -33,6 +33,44 @@ function fixture(fn: (root: string) => void) {
   }
 }
 
+test("Git identity overrides are literal creation settings", () => {
+  const parsed = parseInvocation([
+    "run",
+    "--name",
+    "identity",
+    "--git-name",
+    "Example User",
+    "--git-email",
+    "user@example.invalid",
+  ]);
+  assert.equal(parsed.options["git-name"], "Example User");
+  assert.equal(parsed.options["git-email"], "user@example.invalid");
+  for (const command of ["shell", "start", "build", "scan", "stop", "delete"])
+    assert.throws(
+      () =>
+        parseInvocation([
+          command,
+          "--name",
+          "identity",
+          "--git-name",
+          "Example User",
+        ]),
+      /Git identity.*creation/,
+    );
+  for (const flag of ["--git-name", "--git-email"])
+    for (const value of [
+      "",
+      " \t",
+      "first\nsecond",
+      "first\rsecond",
+      "first\0second",
+    ])
+      assert.throws(
+        () => parseInvocation(["run", "--name", "identity", flag, value]),
+        /Git identity/,
+      );
+});
+
 test("directory mounts preserve multiple explicit destinations and access modes", () =>
   fixture((root) => {
     const home = join(root, "home"),

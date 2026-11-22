@@ -67,6 +67,10 @@ when creating a sandbox; mounts and resources cannot be changed afterward.
 Without `--mount-git`, commands start in `/workspace`. Other mounts do not select
 the working directory.
 
+With `--mount-git`, the host resolves that checkout's commit names and emails
+automatically. Set `--git-name` and `--git-email` at creation to override them;
+see [Git commit identity](docs/usage.md#git-commit-identity).
+
 ## Choose what to share
 
 | Option                          | Host access                                                                                               |

@@ -116,7 +116,13 @@ its guest filesystem. Recreate it with renewed credentials instead of using
 `start`. If errors continue, create a sandbox without `--mount-codex-auth` and run
 `codex login --device-auth` inside it. Export the old sandbox's work before
 deletion. Never remove or overwrite the host auth file as a recovery step.
-Host Git identity, signing agents, SSH keys, and hc sockets are not automatically
+With `--mount-git`, host Git resolves the selected checkout's author and committer
+names and emails into guest environment variables. `--git-name` and `--git-email`
+override those fields for both roles and can also set identity without a checkout
+mount. These are creation settings; they persist across restarts and do not edit
+shared Git configuration. Missing host identity is left unset with a warning.
+
+Host global Git configuration, signing agents, SSH keys, and hc sockets are not automatically
 mounted. Generic directory shares grant access to the explicit paths selected.
 
 ## Progress and lifecycle

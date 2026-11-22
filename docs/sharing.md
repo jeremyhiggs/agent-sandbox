@@ -54,8 +54,11 @@ Additional `--volume` repositories do not discover external Git metadata; use
 self-contained checkouts for those. `.jj` links do not add metadata stores.
 
 Host SSH/AWS directories, credential helpers, signing agents, global Git config,
-runtime sockets and host hc state are not forwarded automatically. Configure a
-guest Git identity if it needs to commit. `gh` is installed without host GitHub
+runtime sockets and host hc state are not forwarded automatically. With
+`--mount-git`, the host resolves that checkout's Git author/committer names and
+emails and sets them as guest environment variables. Use `--git-name` and
+`--git-email` to override them, or to set an identity without a checkout mount.
+See [Git commit identity](usage.md#git-commit-identity). `gh` is installed without host GitHub
 credentials. Image builds include no user configuration, credentials or checkout
 contents.
 

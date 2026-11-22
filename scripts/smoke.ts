@@ -49,6 +49,11 @@ function destroy(name: string) {
   invoke(["delete", "--name", name]);
 }
 try {
+  for (const key of Object.keys(process.env))
+    if (key.startsWith("GIT_")) delete process.env[key];
+  process.env.GIT_CONFIG_GLOBAL = join(root, "global.gitconfig");
+  process.env.GIT_CONFIG_NOSYSTEM = "1";
+  writeFileSync(process.env.GIT_CONFIG_GLOBAL, "");
   mkdirSync(join(home, ".codex", "skills"), { recursive: true });
   const codex = join(home, ".codex");
   writeFileSync(join(codex, "auth.json"), '{"fixture":"initial"}\n');
@@ -71,7 +76,10 @@ try {
   mkdirSync(join(home, ".local", "share", "opencode"), { recursive: true });
   writeFileSync(join(home, ".claude.json"), '{"smoke":true}\n');
   run("git", ["init", "-q", main]);
+  run("git", ["-C", main, "config", "user.name", "Sandbox Smoke"]);
+  run("git", ["-C", main, "config", "user.email", "smoke@example.invalid"]);
   run("git", ["-C", main, "worktree", "add", "--orphan", "-qb", "smoke", work]);
+  const gitConfig = readFileSync(join(main, ".git", "config"), "utf8");
   const gitPointer = readFileSync(join(work, ".git"), "utf8");
   // Ordinary execution must never call hc, even with an unusable hc on PATH.
   const fakeBin = join(root, "bin");
@@ -184,7 +192,7 @@ try {
     "--exec",
     "node",
     "-e",
-    `const fs=require('node:fs'),assert=require('node:assert/strict'); assert.ok(fs.existsSync(${JSON.stringify(join(main, ".git", "HEAD"))})); fs.writeFileSync('normal-git.txt','normal checkout'); require('node:child_process').execFileSync('git',['add','normal-git.txt']);`,
+    `const fs=require('node:fs'),assert=require('node:assert/strict'),cp=require('node:child_process'); assert.ok(fs.existsSync(${JSON.stringify(join(main, ".git", "HEAD"))})); for (const role of ['AUTHOR','COMMITTER']) { assert.equal(process.env['GIT_'+role+'_NAME'],'Sandbox Smoke'); assert.equal(process.env['GIT_'+role+'_EMAIL'],'smoke@example.invalid'); assert.match(cp.execFileSync('git',['var','GIT_'+role+'_IDENT'],{encoding:'utf8'}),/^Sandbox Smoke <smoke@example\\.invalid> /); } fs.writeFileSync('normal-git.txt','normal checkout'); cp.execFileSync('git',['add','normal-git.txt']);`,
   ]);
   assert.match(
     run("git", ["-C", main, "status", "--porcelain"]),
@@ -194,6 +202,11 @@ try {
   const probe = `
     const fs = require('node:fs'), assert = require('node:assert/strict');
     assert.equal(process.cwd(), ${JSON.stringify(work)});
+    for (const role of ['AUTHOR', 'COMMITTER']) {
+      assert.equal(process.env['GIT_'+role+'_NAME'], 'Override Smoke');
+      assert.equal(process.env['GIT_'+role+'_EMAIL'], 'override@example.invalid');
+      assert.match(require('node:child_process').execFileSync('git', ['var', 'GIT_'+role+'_IDENT'], {encoding:'utf8'}), /^Override Smoke <override@example\\.invalid> /);
+    }
     assert.equal(fs.existsSync(${JSON.stringify(sentinel)}), false);
     assert.equal(fs.existsSync(${JSON.stringify(join(home, ".codex"))}), false);
     assert.throws(() => fs.writeFileSync(${JSON.stringify(skill)}, 'fail'), e => ['EROFS','EACCES'].includes(e.code));
@@ -205,6 +218,10 @@ try {
     launch("literal", [
       "--mount-git",
       "--mount-skills",
+      "--git-name",
+      "Override Smoke",
+      "--git-email",
+      "override@example.invalid",
       "--exec",
       "node",
       "-e",
@@ -649,6 +666,7 @@ try {
     "shared checkout\n",
   );
   assert.ok(existsSync(sentinel));
+  assert.equal(readFileSync(join(main, ".git", "config"), "utf8"), gitConfig);
   console.log(
     "Persistent lifecycle, independent terminals, literal argv, pipes, agent state, opt-in Git/worktree metadata and isolated Herdr supervision passed",
   );
