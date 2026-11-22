@@ -20,9 +20,31 @@
   "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "formatter": { "indentStyle": "space" },
   "markdown": { "parser": { "frontmatter": true } },
-  "linter": { "enabled": true, "rules": { "preset": "none" } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+      "correctness": {
+        "noUnusedImports": "error",
+        "noUnusedVariables": "error"
+      },
+      "complexity": { "noUselessCatch": "error" },
+      "suspicious": { "noSelfCompare": "error" }
+    }
+  },
   "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "overrides": [
+    {
+      "includes": ["tests/**/*.ts"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noFocusedTests": "error",
+            "noSkippedTests": "error"
+          }
+        }
+      }
+    },
     {
       "includes": ["**/*.md"],
       "linter": {

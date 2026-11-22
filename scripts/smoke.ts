@@ -26,12 +26,10 @@ const home = join(root, "home"),
   work = join(root, "linked worktree");
 const binary = values.cli ?? process.execPath;
 const prefix = values.cli ? [] : [join(ROOT, "scripts", "sandbox.ts")];
-const names = new Set<string>();
 const attemptedNames = new Set<string>();
 const guestName = (suffix: string) => `ac-smoke-${process.pid}-${suffix}`;
 let coreStarted = false;
 function track(name: string): string {
-  names.add(name);
   attemptedNames.add(name);
   return name;
 }
@@ -49,7 +47,6 @@ function launch(suffix: string, args: string[], input?: string) {
 }
 function destroy(name: string) {
   invoke(["delete", "--name", name]);
-  names.delete(name);
 }
 try {
   mkdirSync(join(home, ".codex", "skills"), { recursive: true });
@@ -144,7 +141,6 @@ try {
     JSON.parse(invoke(["delete", "--name", jsonGuest, "--json"])).ok,
     true,
   );
-  names.delete(jsonGuest);
   const dataRW = join(root, "data rw"),
     dataRO = join(root, "data ro");
   mkdirSync(dataRW);
@@ -378,7 +374,6 @@ try {
   assert.equal(noninteractive.status, 1);
   assert.match(noninteractive.stderr, /require a TTY/);
   assert.doesNotMatch(invoke(["status"]), new RegExp(rejected));
-  names.delete(rejected);
   const registered = JSON.parse(run("hc", ["machine", "ls", "--json"]));
   assert.equal(
     registered.machines.length,
@@ -622,7 +617,6 @@ try {
     "retained",
   );
   invoke(["delete", "--name", retained]);
-  names.delete(retained);
   process.env.HC_SESSION = "smoke";
   const disposable = track(guestName("rm"));
   invoke([
@@ -636,9 +630,7 @@ try {
     "true",
   ]);
   invoke(["stop", "--name", disposable]);
-  names.delete(disposable);
   assert.doesNotMatch(invoke(["status"]), new RegExp(disposable));
-  for (const name of names) destroy(name);
   const guests = JSON.parse(
     run("container", ["ls", "--all", "--format", "json"]),
   );

@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PROFILE_PACKAGES } from "../image/packages.ts";
 
 const root = join(import.meta.dirname, "..", "image");
 function version(tool: string): string {
@@ -51,12 +52,9 @@ for (const [arch, triple] of [
   hc[arch] = await artifact(release.url, release.sha256);
 }
 lock.hc = hc;
-for (const [profile, dependency, variable] of [
-  ["base", "agent-browser", "AGENT_BROWSER"],
-  ["codex", "@openai/codex", "CODEX"],
-  ["opencode", "@opencode/cli", "OPENCODE"],
-  ["claude", "@anthropic-ai/claude-code", "CLAUDE"],
-]) {
+for (const [profile, { dependency, variable }] of Object.entries(
+  PROFILE_PACKAGES,
+)) {
   const tools = join(root, "tools", profile);
   // Resolve afresh under the policy, without first accepting an obsolete graph
   // that a stricter cooldown may reject. Publish only a successful resolution.

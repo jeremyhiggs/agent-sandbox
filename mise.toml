@@ -66,8 +66,12 @@ description = "Build all four images with a shared browser base"
 run = "node scripts/profiles.ts build"
 
 [tasks.scan]
-description = "Export and scan the Apple image; fail on HIGH or CRITICAL CVEs"
+description = "Scan all Apple images for vulnerabilities and secrets; gate HIGH/CRITICAL"
 run = "node scripts/profiles.ts scan"
+
+[tasks."scan:json"]
+description = "Scan the Apple base image with a JSON CLI result and diagnostics on stderr"
+run = "node scripts/sandbox.ts scan --engine container --profile base --json"
 
 [tasks.smoke]
 description = "Exercise persistent lifecycle, terminals, opt-in mounts, and isolated host hc"

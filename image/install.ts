@@ -13,6 +13,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   installedPackages,
+  PROFILE_PACKAGES,
   packagePins,
   verifyPackageInventory,
 } from "./packages.ts";
@@ -67,9 +68,10 @@ symlinkSync("/opt/pnpm/bin/pnpm.cjs", "/usr/local/bin/pnpm");
 const manifest = JSON.parse(
   readFileSync("/opt/tools/base/package.json", "utf8"),
 ) as { dependencies: Record<string, string> };
+const { dependency, variable } = PROFILE_PACKAGES.base;
 assert.equal(
-  manifest.dependencies["agent-browser"],
-  process.env.AGENT_BROWSER_VERSION,
+  manifest.dependencies[dependency],
+  process.env[`${variable}_VERSION`],
 );
 run("pnpm", [
   "--dir",
@@ -78,7 +80,7 @@ run("pnpm", [
   "--frozen-lockfile",
   "--ignore-scripts",
 ]);
-for (const tool of ["agent-browser"])
+for (const tool of [dependency])
   symlinkSync(
     "/opt/tools/base/node_modules/.bin/" + tool,
     "/usr/local/bin/" + tool,

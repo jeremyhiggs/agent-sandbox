@@ -642,16 +642,19 @@ test("Herdr names fail before filesystem or container access when too long", () 
   }));
 
 test("bare invocation prints help without creating a sandbox", () => {
-  const parsed = parseInvocation([]);
-  assert.equal(parsed.command, "help");
-  assert.equal(parsed.options.agent, undefined);
-  assert.equal(parsed.options.herdr, false);
-  assert.deepEqual(parsed.argv, ["bash"]);
+  const output = execFileSync(
+    process.execPath,
+    [join(ROOT, "scripts", "sandbox.ts")],
+    {
+      env: { ...process.env, PATH: "" },
+      encoding: "utf8",
+    },
+  );
+  assert.match(output, /Usage: agent-sandbox COMMAND/);
 });
 
 test("--skill reads the bundled guidance outside a checkout without host tools", () =>
   fixture((root) => {
-    assert.equal(parseInvocation(["--skill"]).command, "skill");
     const output = execFileSync(
       process.execPath,
       [join(ROOT, "scripts", "sandbox.ts"), "--skill"],
@@ -796,14 +799,6 @@ test("management commands and help stay explicit", () => {
   );
 });
 
-test("base mount plan exposes no host checkout or agent credentials", () =>
-  fixture((root) => {
-    const work = join(root, "work");
-    mkdirSync(work);
-    assert.deepEqual([...mountPlan(undefined, root).keys()], []);
-    assert.deepEqual([...mountPlan(work, root).keys()], [work]);
-  }));
-
 test("unverified agent state mounts are rejected while agent launches remain available", () => {
   for (const agent of ["claude", "opencode"] as const) {
     assert.throws(
@@ -828,6 +823,7 @@ test("host state and skills are opt-in independently of agent selection", () =>
     symlinkSync(skills, join(codex, "skills"));
     const auth = join(codex, "auth.json");
     writeFileSync(auth, "{}\n");
+    assert.deepEqual([...mountPlan(undefined, root).keys()], []);
     assert.deepEqual(
       [...mountPlan(undefined, root, { "mount-codex-auth": true }).keys()],
       [auth],

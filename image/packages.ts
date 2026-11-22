@@ -1,6 +1,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
+export const PROFILE_PACKAGES = {
+  base: { dependency: "agent-browser", variable: "AGENT_BROWSER" },
+  codex: { dependency: "@openai/codex", variable: "CODEX" },
+  opencode: { dependency: "@opencode/cli", variable: "OPENCODE" },
+  claude: { dependency: "@anthropic-ai/claude-code", variable: "CLAUDE" },
+} as const;
+
 export type ApkoLock = {
   contents: {
     packages: { name: string; version: string; architecture: string }[];

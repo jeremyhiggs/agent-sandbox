@@ -31,6 +31,13 @@ Biome covers JavaScript/TypeScript, Markdown, JSON and YAML. shfmt and ShellChec
 cover shell scripts through the normal `lint` and `check` tasks. Use
 `mise run fmt` to apply formatting and `mise tasks` to list tasks.
 
+Biome rejects unused imports and variables, redundant catch-and-rethrow blocks,
+and direct self-comparisons. Test files also fail lint on focused and skipped
+test declarations. These checks run through the same `mise run check` in local
+development and CI. They do not detect duplicate scenarios, self-comparisons
+inside assertion calls, or mocks that manufacture the result under test; review
+those cases against the observable behavior and independent expected values.
+
 Documentation-only changes need source checks and privacy review when they do
 not affect runtime behavior, build inputs, configuration or dependencies.
 Other publication checks remain defined in [AGENTS.md](../AGENTS.md).
@@ -53,6 +60,10 @@ Run the chosen column in order:
 Check runtime availability before reporting a command unavailable. Build before
 checking or scanning, and cover `base`, `codex`, `opencode` and `claude`.
 An arm64 run does not verify amd64; report the architecture actually tested.
+
+Use `mise run scan:json` for the focused Apple base-image scan through the JSON
+CLI path. It runs the same policy gate, keeps native reports, and sends scanner
+diagnostics to stderr. It does not replace the four-profile scan above.
 
 ### Images and reproducibility
 
@@ -150,14 +161,40 @@ Their version and guest-local state tests do not prove authenticated operation.
 
 Keep reports under ignored `.artifacts/`:
 
-- `vulnerabilities-agent-sandbox-{base,codex,opencode,claude}.json`
+- `vulnerabilities-{container,docker}-agent-sandbox-{base,codex,opencode,claude}.json`
 - `vulnerabilities-repo.json`
+- `vulnerabilities-*.trivy.json` for the scanner version, effective cache and
+  database metadata captured after each successful scan, including scans whose
+  findings fail policy.
 - `browser-release.json`
 - `apko/sbom/` for native SPDX SBOMs.
 
 HIGH/CRITICAL findings block publication, including unfixed findings, except for
 explicit approved exceptions. Reports retain lower severities and suppressed
 findings. See the [exception scope and expiry](reproducibility.md#vulnerability-checks).
+
+Trivy writes the complete JSON report, then `trivy convert` renders a native
+table and enforces HIGH/CRITICAL policy from that same scan. Image scans include
+vulnerabilities and secrets. Exit 42 means policy findings; execution errors keep
+their exit status, including 126/127 for unavailable tools. An error, exclusion or
+unrun check is not a clean scan. The CLI's `--json` envelope remains separate from
+Trivy's report; scanner output goes to stderr in this mode.
+
+Docker scans inspect the selected daemon, report the actual image ID/platform,
+and scan that ID through the same Docker endpoint with registry fallback disabled.
+Apple Container scans export its OCI layout because Trivy has no native Apple
+image source. Report names include the engine so its scan does not replace a
+report from the other image store. Docker runtime fixtures use `--pull=never` and `--rm`; automatic
+removal includes their anonymous volumes. These runtime checks exercise actual
+entry points separately from vulnerability scanning.
+
+Avoid concurrent worktrees building the same local tags. Coordinate image or
+cache cleanup with all active build/scan owners, save their reports first, and
+inspect exact references on the selected daemon before diagnosing missing images.
+Do not use broad image or volume pruning as test teardown. Delete only owned
+fixtures and volumes, preserving the original test failure if cleanup also fails.
+Historical reports and mocked orchestration tests are not fresh image scans;
+retain the scanner, database, platform and image identity when quoting results.
 
 Trivy covers recognized Wolfi and discoverable Node inventories. Coverage of
 downloaded native binaries and Chrome is limited. A verified checksum is not a
@@ -169,6 +206,8 @@ Use an isolated Trivy cache if another scan holds its lock; do not disable scans
 CI configures source and context checks, separate pnpm/repository/browser audits,
 and four-profile Docker builds, runtime checks and Trivy scans on native Linux
 amd64 and arm64 runners. It uploads vulnerability reports and OS SBOMs.
+Runtime checks and scans require a successful build. A runtime-check failure
+still allows scanning that built image, while keeping the job failed.
 
 Triggers are push, pull request, manual dispatch and daily at **00:00 UTC**
 (`0 0 * * *`). Read the job results for a particular commit; configured coverage

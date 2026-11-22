@@ -23,6 +23,11 @@ This file defines repository verification requirements.
 Run focused tests while developing, but do not substitute them for the final
 `mise run check`. Fix failures before committing. Do not create new tests that
 only assert documentation wording or other mechanical edits.
+Biome rejects unused imports/variables, redundant catch-and-rethrow blocks and
+direct self-comparisons; test-scoped rules reject focused/skipped declarations.
+Review assertion arguments and scenario coverage separately:
+lint does not detect all tautologies, duplicate scenarios or manufactured mocks.
+Keep expected values independent and test each security restriction separately.
 
 ## Before pushing or updating a PR
 

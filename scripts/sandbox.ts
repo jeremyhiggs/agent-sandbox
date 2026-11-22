@@ -27,7 +27,7 @@ import {
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
 import { buildOS } from "./build-os.ts";
-import { checkVulnerabilities } from "./vulnerabilities.ts";
+import { scanWithTrivy } from "./vulnerabilities.ts";
 
 export const ROOT = resolve(import.meta.dirname, "..");
 export const PROFILES = ["base", "codex", "opencode", "claude"] as const;
@@ -419,21 +419,31 @@ function registerSandbox(name: string, labels: Labels): void {
   if (labels[HERDR_LABEL] !== "true") return;
   executable("hc");
   const machines = JSON.parse(hostHC(labels, ["machine", "ls", "--json"]));
-  const via =
-    labels[VIA_LABEL] ||
-    [executable("container"), "exec", "-i", name, "sh", "-c"]
-      .map(quote)
-      .join(" ");
+  const via = labels[VIA_LABEL] || hcTransport(name);
   const existing = machines.machines.find(
     (machine: { name: string }) => machine.name === name,
   );
   if (existing) {
-    if (existing.via === true && existing.target === via) return;
+    if (sameTransport(existing, via)) return;
     throw new Error(
       `hc machine name already exists with another transport: ${name}`,
     );
   }
   hostHC(labels, ["machine", "add", "--name", name, "--via", via]);
+}
+
+function hcTransport(
+  name: string,
+  container = executable("container"),
+): string {
+  return [container, "exec", "-i", name, "sh", "-c"].map(quote).join(" ");
+}
+
+function sameTransport(
+  machine: { via?: boolean; target?: string },
+  via: string,
+): boolean {
+  return machine.via === true && machine.target === via;
 }
 
 function sandboxInfo(name: string) {
@@ -496,9 +506,7 @@ export function createSandbox(options: Options): string {
     [CORE_SOCKET_LABEL]: options["hc-session"]
       ? ""
       : (process.env.HC_SOCKET ?? ""),
-    [VIA_LABEL]: [container, "exec", "-i", name, "sh", "-c"]
-      .map(quote)
-      .join(" "),
+    [VIA_LABEL]: hcTransport(name, container),
     [SPACE_LABEL]: options.herdr ? `sp${randomUUID().slice(0, 8)}` : "",
     [TAB_LABEL]: "",
   };
@@ -587,12 +595,8 @@ export function stop(name: string, remove = false): void {
         (machine: { name: string }) => machine.name === name,
       );
       if (machine) {
-        const via =
-          labels[VIA_LABEL] ||
-          [executable("container"), "exec", "-i", name, "sh", "-c"]
-            .map(quote)
-            .join(" ");
-        if (machine.via !== true || machine.target !== via)
+        const via = labels[VIA_LABEL] || hcTransport(name);
+        if (!sameTransport(machine, via))
           throw new Error(
             `Refusing to remove a different hc transport: ${name}`,
           );
@@ -652,49 +656,65 @@ export function buildImage(
   execFileSync(engine, [...args, ROOT], { stdio: ["inherit", stdout, 2] });
 }
 
-function scan(engine: string, image: string, json = false): string {
+export function scanImage(engine: string, image: string, json = false): string {
   const artifacts = join(ROOT, ".artifacts");
   mkdirSync(artifacts, { recursive: true });
-  const temp = mkdtempSync(join(tmpdir(), "codex-image-"));
+  const report = join(
+    artifacts,
+    `vulnerabilities-${engine}-${image.replace(/[^a-zA-Z0-9_-]/g, "-")}.json`,
+  );
+  let temp: string | undefined;
   try {
-    const archive = join(temp, "image.tar");
-    run(engine, ["image", "save", "--output", archive, image]);
-    let input = archive;
-    if (engine === "container") {
-      // Apple exports an OCI tar; Trivy expects an unpacked OCI layout.
-      input = join(temp, "oci");
-      mkdirSync(input);
-      run("tar", ["-xf", archive, "-C", input]);
-      rmSync(archive);
-    }
-    const report = join(
-      artifacts,
-      `vulnerabilities-${image.replace(/[^a-zA-Z0-9_-]/g, "-")}.json`,
-    );
-    run("trivy", [
+    scanWithTrivy(
       "image",
-      "--ignorefile",
-      join(ROOT, ".trivyignore.yaml"),
-      "--show-suppressed",
-      "--input",
-      input,
-      "--scanners",
-      "vuln",
-      "--format",
-      "json",
-      "--output",
+      () => {
+        if (engine === "container") {
+          // Apple exports an OCI tar; Trivy expects an unpacked OCI layout.
+          temp = mkdtempSync(join(tmpdir(), "codex-image-"));
+          const archive = join(temp, "image.tar");
+          run(engine, ["image", "save", "--output", archive, image]);
+          const input = join(temp, "oci");
+          mkdirSync(input);
+          run("tar", ["-xf", archive, "-C", input]);
+          rmSync(archive);
+          return ["--input", input];
+        } else {
+          const endpoint = process.env.DOCKER_CONTEXT
+            ? run("docker", [
+                "context",
+                "inspect",
+                "--format",
+                "{{.Endpoints.docker.Host}}",
+              ]).trim()
+            : process.env.DOCKER_HOST ||
+              run("docker", [
+                "context",
+                "inspect",
+                "--format",
+                "{{.Endpoints.docker.Host}}",
+              ]).trim();
+          const identity = run("docker", [
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}} {{.Os}}/{{.Architecture}}",
+            image,
+          ]).trim();
+          const [id, platform] = identity.split(/\s+/);
+          if (!id || !platform)
+            throw new Error("Docker returned no image identity/platform");
+          (json ? console.error : console.log)(
+            `Scanning Docker image ${id} (${platform})`,
+          );
+          return ["--image-src", "docker", "--docker-host", endpoint, id];
+        }
+      },
       report,
-      "--exit-code",
-      "0",
-    ]);
-    try {
-      checkVulnerabilities(report, json ? console.error : console.log);
-    } catch (error) {
-      throw Object.assign(error as Error, { report });
-    }
+      json ? 2 : 1,
+    );
     return report;
   } finally {
-    rmSync(temp, { recursive: true });
+    if (temp) rmSync(temp, { recursive: true });
   }
 }
 
@@ -734,7 +754,7 @@ async function workload(
     labels[SPACE_LABEL] = target.space;
     labels[TAB_LABEL] = target.tab;
   }
-  if (custom && !options.detach && !options["herdr-space"]) {
+  if (directWorkload(custom, options)) {
     const exitCode = await foreground(
       "container",
       [
@@ -814,6 +834,10 @@ async function workload(
     exitCode: result.finished_ms !== null ? (result.exit_code ?? 1) : code,
     terminal: terminalID,
   };
+}
+
+function directWorkload(custom: boolean, options: Options): boolean {
+  return custom && !options.detach && !options["herdr-space"];
 }
 
 const STRING_OPTIONS = [
@@ -1000,7 +1024,7 @@ export function parseInvocation(input: string[]) {
     options.json &&
     ["run", "start", "shell"].includes(command) &&
     !options.detach &&
-    (!custom || options["herdr-space"])
+    !directWorkload(!!custom, options)
   )
     throw new Error(
       "--json managed launches require --detach; use --exec for a foreground command",
@@ -1166,13 +1190,13 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
       const image =
         options.image ??
         `agent-sandbox:${options.agent ?? options.profile ?? "base"}`;
-      const report = scan(engine, image, options.json);
+      const report = scanImage(engine, image, options.json);
       respond({ engine, image, report });
       return;
     }
     if (
       !options.detach &&
-      (!custom || options["herdr-space"]) &&
+      !directWorkload(custom, options) &&
       (!process.stdin.isTTY || !process.stdout.isTTY)
     )
       throw new Error(
@@ -1197,8 +1221,6 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
       const { labels } = sandboxInfo(name);
       run("container", ["start", name]);
       registerSandbox(name, labels);
-    } else if (command === "shell") {
-      sandboxInfo(name);
     }
     const result = await workload(name, argv, options, custom);
     respond(
@@ -1213,14 +1235,23 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    const failure = error as {
+      exitCode?: number;
+      status?: number;
+      code?: string;
+    };
+    const exitCode =
+      failure.exitCode ??
+      failure.status ??
+      (failure.code === "ENOENT" ? 127 : failure.code === "EACCES" ? 126 : 1);
     if (jsonRequested(input)) {
       const data =
         error && typeof error === "object" && "report" in error
           ? { report: error.report }
           : null;
-      jsonResult(command, data, 1, message);
+      jsonResult(command, data, exitCode, message);
     } else console.error(message);
-    process.exitCode = 1;
+    process.exitCode = exitCode;
   }
 }
 

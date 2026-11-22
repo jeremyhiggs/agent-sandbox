@@ -1,7 +1,6 @@
-import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { checkVulnerabilities } from "./vulnerabilities.ts";
+import { scanWithTrivy } from "./vulnerabilities.ts";
 
 const root = join(import.meta.dirname, "..");
 const artifacts = join(root, ".artifacts");
@@ -9,31 +8,23 @@ mkdirSync(artifacts, { recursive: true });
 const command = process.argv[2];
 if (command === "repo") {
   const report = join(artifacts, "vulnerabilities-repo.json");
-  execFileSync(
-    "trivy",
-    [
+  try {
+    scanWithTrivy(
       "fs",
-      "--ignorefile",
-      join(root, ".trivyignore.yaml"),
-      "--show-suppressed",
-      "--scanners",
-      "vuln",
-      "--include-dev-deps",
-      "--format",
-      "json",
-      "--output",
+      [
+        "--include-dev-deps",
+        "--skip-dirs",
+        ".artifacts",
+        "--skip-dirs",
+        "node_modules",
+        root,
+      ],
       report,
-      "--exit-code",
-      "0",
-      "--skip-dirs",
-      ".artifacts",
-      "--skip-dirs",
-      "node_modules",
-      root,
-    ],
-    { stdio: "inherit" },
-  );
-  checkVulnerabilities(report);
+    );
+  } catch (error) {
+    console.error((error as Error).message);
+    process.exitCode = (error as { exitCode?: number }).exitCode ?? 1;
+  }
 } else if (command === "browser") {
   const response = await fetch(
     "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",

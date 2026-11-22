@@ -150,6 +150,8 @@ before runtime access; use plain `attach` or `terminals --json` instead.
 Launcher errors return `ok: false`, `exit_code: 1` and `error.message`. Completed
 foreground workloads return their actual exit code, with `ok: false` for nonzero
 exits. Vulnerability-gate failures retain `data.report`.
+Scan policy findings return exit 42. Scanner execution errors preserve their
+native exit status; see [scan coverage](verification.md#reports-and-scan-coverage).
 
 Use `data.address` with host hc when `--herdr` registration is enabled; otherwise
 address guest terminals through `container exec`. See [Herdr supervision](herdr.md).

@@ -1,11 +1,18 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { buildImage, PROFILES, prepareBuild, ROOT } from "./sandbox.ts";
+import {
+  buildImage,
+  PROFILES,
+  prepareBuild,
+  ROOT,
+  scanImage,
+} from "./sandbox.ts";
+import { POLICY_EXIT_CODE } from "./vulnerabilities.ts";
 
 const [command, engine = "container"] = process.argv.slice(2);
 if (!["container", "docker"].includes(engine))
   throw new Error("Use container or docker");
-const failed: string[] = [];
+const failed: { profile: string; exitCode: number }[] = [];
 const osArchive = command === "build" ? prepareBuild() : undefined;
 for (const profile of PROFILES) {
   const image = `agent-sandbox:${profile}`;
@@ -14,11 +21,9 @@ for (const profile of PROFILES) {
     buildImage({ engine, profile }, osArchive);
     continue;
   }
-  let binary: string;
-  let args: string[];
+  let runProfile: () => unknown;
   if (command === "audit" || command === "locks") {
-    binary = "pnpm";
-    args = [
+    const args = [
       "--dir",
       join(ROOT, "image", "tools", profile),
       ...(command === "audit"
@@ -30,27 +35,49 @@ for (const profile of PROFILES) {
             "--ignore-scripts",
           ]),
     ];
+    runProfile = () => execFileSync("pnpm", args, { stdio: "inherit" });
   } else if (command === "scan") {
-    binary = "node";
-    args = [
-      join(ROOT, "scripts", "sandbox.ts"),
-      command,
-      "--engine",
-      engine,
-      "--profile",
-      profile,
-    ];
+    runProfile = () => scanImage(engine, image);
   } else if (command === "check") {
-    binary = engine;
-    args = ["run", "--rm", image, "node", "/opt/agent-sandbox/check.ts"];
+    runProfile = () =>
+      execFileSync(
+        engine,
+        [
+          "run",
+          "--rm",
+          ...(engine === "docker" ? ["--pull=never"] : []),
+          image,
+          "node",
+          "/opt/agent-sandbox/check.ts",
+        ],
+        { stdio: "inherit" },
+      );
   } else throw new Error("Use build|check|scan|audit|locks [container|docker]");
   console.log(`\n${command}: ${image}`);
   try {
-    execFileSync(binary, args, { stdio: "inherit" });
+    runProfile();
   } catch (error) {
-    failed.push(profile);
+    const failure = error as Error & {
+      exitCode?: number;
+      status?: number;
+      code?: string;
+    };
+    if (command === "scan") console.error(failure.message);
+    failed.push({
+      profile,
+      exitCode:
+        failure.exitCode ??
+        failure.status ??
+        (failure.code === "ENOENT" ? 127 : failure.code === "EACCES" ? 126 : 1),
+    });
   }
 }
 
-if (failed.length)
-  throw new Error(`${command} failed for: ${failed.join(", ")}`);
+if (failed.length) {
+  console.error(
+    `${command} failed for: ${failed.map(({ profile, exitCode }) => `${profile} (exit ${exitCode})`).join(", ")}`,
+  );
+  process.exitCode = (
+    failed.find(({ exitCode }) => exitCode !== POLICY_EXIT_CODE) ?? failed[0]
+  ).exitCode;
+}

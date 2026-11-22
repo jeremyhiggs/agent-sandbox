@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { packagePins } from "../image/packages.ts";
+import { PROFILE_PACKAGES, packagePins } from "../image/packages.ts";
 
 const root = join(import.meta.dirname, "..");
 const toml = (file: string) =>
@@ -154,12 +154,9 @@ for (const tool of ["pnpm", "hc"]) {
     assert.ok(entry.url.startsWith("https://"));
   }
 }
-for (const [profile, dependency, variable] of [
-  ["base", "agent-browser", "AGENT_BROWSER"],
-  ["codex", "@openai/codex", "CODEX"],
-  ["opencode", "@opencode/cli", "OPENCODE"],
-  ["claude", "@anthropic-ai/claude-code", "CLAUDE"],
-]) {
+for (const [profile, { dependency, variable }] of Object.entries(
+  PROFILE_PACKAGES,
+)) {
   const tools = JSON.parse(
     readFileSync(join(image, "tools", profile, "package.json"), "utf8"),
   );

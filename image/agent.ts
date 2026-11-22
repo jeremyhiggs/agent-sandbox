@@ -3,17 +3,17 @@ import { execFileSync } from "node:child_process";
 import { readFileSync, realpathSync, rmSync, symlinkSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
+import { PROFILE_PACKAGES } from "./packages.ts";
 
 const [agent, version] = process.argv.slice(2);
-const packages: Record<string, string> = {
-  codex: "@openai/codex",
-  opencode: "@opencode/cli",
-  claude: "@anthropic-ai/claude-code",
-};
-assert.ok(packages[agent], "Unknown agent");
+const profile = Object.entries(PROFILE_PACKAGES).find(
+  ([name]) => name === agent && name !== "base",
+)?.[1];
+assert.ok(profile, "Unknown agent");
+const { dependency } = profile;
 const root = `/opt/tools/${agent}`;
 const manifest = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
-assert.deepEqual(manifest.dependencies, { [packages[agent]]: version });
+assert.deepEqual(manifest.dependencies, { [dependency]: version });
 execFileSync(
   "pnpm",
   ["--dir", root, "install", "--frozen-lockfile", "--ignore-scripts"],
@@ -24,9 +24,9 @@ if (agent !== "codex") {
   // Link the integrity-locked Linux binary directly. Vendor postinstall scripts
   // may fetch an unpinned fallback; none are run during this build.
   const require = createRequire(
-    realpathSync(join(root, "node_modules", packages[agent], "package.json")),
+    realpathSync(join(root, "node_modules", dependency, "package.json")),
   );
-  const platform = `${packages[agent]}-linux-${process.arch}`;
+  const platform = `${dependency}-linux-${process.arch}`;
   binary = join(
     dirname(require.resolve(`${platform}/package.json`)),
     ...(agent === "opencode" ? ["bin", "opencode"] : ["claude"]),
