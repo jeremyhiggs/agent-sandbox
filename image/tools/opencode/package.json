@@ -1,0 +1,7 @@
+{
+  "name": "agent-sandbox-opencode",
+  "private": true,
+  "dependencies": {
+    "@opencode/cli": "2.2.7"
+  }
+}

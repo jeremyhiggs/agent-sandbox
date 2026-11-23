@@ -1,0 +1,185 @@
+[tools]
+node = "24.22.3"
+pnpm = "11.28.12"
+biome = "2.6.7"
+"npm:typescript" = "7.0.2"
+hadolint = "2.15.1"
+trivy = "0.76.2"
+taplo = "0.10.0"
+yq = "4.54.3"
+actionlint = "1.7.12"
+shellcheck = "0.11.0"
+shfmt = "3.14.1"
+apko = "1.5.1"
+container = { version = "1.7.1", os = ["macos"] }
+
+[tool_config]
+locked = true
+
+[settings.npm]
+package_manager = "aube"
+
+# Image dependencies are passed to Dockerfile by scripts/sandbox.ts build.
+# OS dependencies and CLI archives have committed locks; refresh explicitly.
+[env]
+IMAGE_MISE_VERSION = "2026.11.7"
+IMAGE_NODE_VERSION = "24.22.3"
+IMAGE_PNPM_VERSION = "11.28.12"
+IMAGE_BROWSER_VERSION = "158.0.8127.36"
+IMAGE_BROWSER_SHA256_ARM64 = "f811b64a50cbc73f94fda7b3f3b3bf62be5d9409b3207e6ead9b61e6706afffe"
+IMAGE_BROWSER_SHA256_AMD64 = "dba9cc838e1ce269c33ea68170881127bd15d078fc3ca5891c90802819a4d7c7"
+IMAGE_MISE_BASE = "ghcr.io/jdx/mise:2026.11.7@sha256:36a8408d3398aff30a761b4ae57f71f50942d64f4e7ecd5353ffaee7ec4fa63a"
+IMAGE_CODEX_VERSION = "0.167.1"
+IMAGE_OPENCODE_VERSION = "2.2.7"
+IMAGE_CLAUDE_VERSION = "2.1.322"
+IMAGE_AGENT_BROWSER_VERSION = "0.42.0"
+IMAGE_HC_VERSION = "0.1.20"
+IMAGE_GH_VERSION = "2.104.0"
+
+[tasks.fmt]
+description = "Format scripts, documentation, and configuration"
+run = [
+  "biome check --write .",
+  "node scripts/check-shell.ts --write",
+  "taplo fmt",
+]
+
+[tasks.lint]
+description = "Check scripts, docs, Dockerfile, and CI"
+run = [
+  "biome check .",
+  "tsc --noEmit",
+  "taplo fmt --check",
+  "hadolint Dockerfile",
+  "actionlint",
+  "node scripts/check-shell.ts",
+]
+
+[tasks.test]
+run = "node --test tests/*.test.ts"
+
+[tasks.check]
+depends = ["lint", "test", "lock:check", "audit:browser"]
+
+[tasks.build]
+description = "Build all four images with a shared browser base"
+run = "node scripts/profiles.ts build"
+
+[tasks.scan]
+description = "Scan all Apple images for vulnerabilities and secrets; gate HIGH/CRITICAL"
+run = "node scripts/profiles.ts scan"
+
+[tasks."scan:json"]
+description = "Scan the Apple base image with a JSON CLI result and diagnostics on stderr"
+run = "node scripts/sandbox.ts scan --engine container --profile base --json"
+
+[tasks.smoke]
+description = "Exercise persistent lifecycle, terminals, opt-in mounts, and isolated host hc"
+run = "node scripts/smoke.ts"
+
+[tasks.setup]
+description = "Install the locked Node type definitions"
+run = "pnpm install --frozen-lockfile --ignore-scripts"
+
+[tasks.install]
+description = "Copy the runtime and install ~/.local/bin/agent-sandbox (--bin-dir/--install-dir PATH to override)"
+run = "node scripts/install.ts"
+
+[tasks."smoke:cli"]
+description = "Test the installed CLI from a separate linked worktree and verify hc integration"
+run = "node scripts/smoke.ts --cli agent-sandbox"
+
+[tasks."smoke:context"]
+description = "Verify the actual build context excludes worker reports and installed dependencies"
+run = "node scripts/smoke-context.ts"
+
+[tasks."smoke:context:ci"]
+description = "Verify the build context using Docker in CI"
+run = "node scripts/smoke-context.ts docker"
+
+[tasks."smoke:herdr"]
+description = "Check app space/tab adoption in a new sandbox without changing selection (requires open Herdr)"
+run = "node scripts/smoke-herdr.ts"
+
+[tasks."smoke:codex"]
+description = "Live Codex lifecycle: subscription login, shared skills, worktree, reports, commit, shell, restart and cleanup"
+run = "node scripts/smoke-codex.ts"
+
+[tasks.start]
+description = "Restart a stopped sandbox (pass --name NAME)"
+run = "node scripts/sandbox.ts start"
+
+[tasks.run]
+description = "Create a named persistent sandbox; --agent selects its initial image/program"
+run = "node scripts/sandbox.ts run"
+
+[tasks.stop]
+description = "Stop a sandbox and retain its filesystem (pass --name NAME)"
+run = "node scripts/sandbox.ts stop"
+
+[tasks.shell]
+description = "Open another shell/agent or run --exec in a sandbox (pass --name NAME)"
+run = "node scripts/sandbox.ts shell"
+
+[tasks.attach]
+description = "Reconnect to a guest terminal (pass --name NAME --terminal ID)"
+run = "node scripts/sandbox.ts attach"
+
+[tasks.delete]
+description = "Unregister and destroy a sandbox (pass --name NAME)"
+run = "node scripts/sandbox.ts delete"
+
+[tasks.terminals]
+description = "Discover a sandbox's terminal IDs and names (pass --name NAME)"
+run = "node scripts/sandbox.ts terminals"
+
+[tasks.status]
+description = "List guests owned by this launcher"
+run = "node scripts/sandbox.ts status"
+
+[tasks."build:ci"]
+description = "Build using Docker (Linux CI)"
+run = "node scripts/profiles.ts build docker"
+
+[tasks."scan:ci"]
+description = "Scan the Docker image (Linux CI)"
+run = "node scripts/profiles.ts scan docker"
+
+[tasks."check:image"]
+description = "Test tools, browsers and agent separation in all images"
+run = "node scripts/profiles.ts check"
+
+[tasks."check:image:ci"]
+description = "Test tools, browsers and agent separation in all images using Docker (Linux CI)"
+run = "node scripts/profiles.ts check docker"
+
+[tasks.audit]
+description = "Audit repository/image Node packages, repository dependencies, and browser freshness"
+depends = ["audit:node", "audit:tools", "audit:repo", "audit:browser"]
+
+[tasks."audit:node"]
+run = "pnpm audit --audit-level=high"
+
+[tasks."audit:tools"]
+run = "node scripts/profiles.ts audit"
+
+[tasks."audit:repo"]
+run = "node scripts/security.ts repo"
+
+[tasks."audit:browser"]
+run = "node scripts/security.ts browser"
+
+[tasks."lock:update"]
+description = "Generate the native apko lockfile for both architectures"
+run = [
+  "apko lock image/apko.yaml --output image/apko.lock.json",
+  "chmod 644 image/apko.lock.json",
+]
+
+[tasks."lock:tools"]
+description = "Refresh CLI archive checksums and the image's pnpm dependency lock"
+run = "node scripts/lock-tools.ts"
+
+[tasks."lock:check"]
+description = "Validate package locks, base digests, and CLI version pins"
+run = ["node scripts/check-locks.ts", "node scripts/profiles.ts locks"]

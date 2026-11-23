@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 0 * * *"
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install checksum-verified tools
+        run: bash scripts/ci-setup.sh
+      - name: Install locked development dependencies
+        run: mise run setup
+      - name: Check source, locks, and browser freshness
+        run: mise run check
+      - name: Verify Docker build context
+        run: mise run smoke:context:ci
+
+  audit:
+    strategy:
+      fail-fast: false
+      matrix:
+        check: [node, tools, repo, browser]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install checksum-verified tools
+        run: bash scripts/ci-setup.sh
+      - name: Install locked development dependencies
+        run: mise run setup
+      - name: Audit ${{ matrix.check }}
+        run: mise run audit:${{ matrix.check }}
+      - name: Preserve repository audit reports
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: repository-audit-${{ matrix.check }}
+          path: .artifacts/*.json
+          include-hidden-files: true
+          if-no-files-found: ignore
+
+  image:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Install checksum-verified tools
+        run: bash scripts/ci-setup.sh
+      - name: Build Linux image
+        id: build
+        run: mise run build:ci
+      - name: Check browser and agent separation in every image
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: mise run check:image:ci
+      - name: Scan OS and language dependencies
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
+        run: mise run scan:ci
+      - name: Preserve complete vulnerability report
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: vulnerabilities-${{ matrix.runner }}
+          path: |
+            .artifacts/vulnerabilities-*.json
+            .artifacts/apko/sbom/**
+          include-hidden-files: true
+          if-no-files-found: ignore

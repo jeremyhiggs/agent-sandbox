@@ -1,0 +1,7 @@
+{
+  "name": "agent-sandbox-base",
+  "private": true,
+  "dependencies": {
+    "agent-browser": "0.42.0"
+  }
+}

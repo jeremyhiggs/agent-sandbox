@@ -1,0 +1,12 @@
+vulnerabilities:
+  # https://github.com/advisories/GHSA-fc5q-39xc-vjpf
+  - id: CVE-2026-112366
+    paths:
+      - opt/pnpm/dist/node_modules/picomatch/package.json
+    purls:
+      - pkg:npm/picomatch@4.0.7
+    expired_at: 2026-12-18
+    statement: >-
+      Temporary accepted risk for picomatch bundled in pnpm 11.28.12.
+      No patched picomatch release is available as of 2026-11-18.
+      Remove this exception when a fixed pnpm distribution is available.
