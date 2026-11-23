@@ -1,5 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { rmSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -60,7 +61,8 @@ export function scanWithTrivy(
   args: string[] | (() => string[]),
   report: string,
   stdout: 1 | 2 = 1,
-): void {
+): string {
+  report = report.replace(/\.json$/, `-${randomUUID()}.json`);
   const cache =
     process.env.TRIVY_CACHE_DIR ??
     join(
@@ -72,9 +74,6 @@ export function scanWithTrivy(
       "trivy",
     );
   const provenance = report.replace(/\.json$/, ".trivy.json");
-  // A failed invocation must never leave a prior scan looking current.
-  rmSync(report, { force: true });
-  rmSync(provenance, { force: true });
   const scanners = command === "image" ? "vuln,secret" : "vuln";
   const exitCode = trivy(
     [
@@ -127,7 +126,8 @@ export function scanWithTrivy(
     provenance,
     JSON.stringify(
       {
-        completed_at: new Date().toISOString(),
+        observation: "post-scan-cache",
+        observed_at: new Date().toISOString(),
         cache,
         trivy: JSON.parse(version),
       },
@@ -136,7 +136,8 @@ export function scanWithTrivy(
     ),
   );
   (stdout === 2 ? console.error : console.log)(
-    `Complete report: ${report}\nScanner and database: ${provenance}`,
+    `Complete report: ${report}\nPost-scan cache metadata: ${provenance}`,
   );
   checkVulnerabilities(report, stdout, scanners);
+  return report;
 }

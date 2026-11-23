@@ -459,6 +459,8 @@ function gitIdentityEnvironment(
     "GIT_WORK_TREE",
     "GIT_COMMON_DIR",
     "GIT_INDEX_FILE",
+    "GIT_AUTHOR_DATE",
+    "GIT_COMMITTER_DATE",
   ])
     delete env[key];
   let unavailable = false;
@@ -728,7 +730,7 @@ export function scanImage(engine: string, image: string, json = false): string {
   );
   let temp: string | undefined;
   try {
-    scanWithTrivy(
+    return scanWithTrivy(
       "image",
       () => {
         if (engine === "container") {
@@ -742,20 +744,6 @@ export function scanImage(engine: string, image: string, json = false): string {
           rmSync(archive);
           return ["--input", input];
         } else {
-          const endpoint = process.env.DOCKER_CONTEXT
-            ? run("docker", [
-                "context",
-                "inspect",
-                "--format",
-                "{{.Endpoints.docker.Host}}",
-              ]).trim()
-            : process.env.DOCKER_HOST ||
-              run("docker", [
-                "context",
-                "inspect",
-                "--format",
-                "{{.Endpoints.docker.Host}}",
-              ]).trim();
           const identity = run("docker", [
             "image",
             "inspect",
@@ -769,13 +757,15 @@ export function scanImage(engine: string, image: string, json = false): string {
           (json ? console.error : console.log)(
             `Scanning Docker image ${id} (${platform})`,
           );
-          return ["--image-src", "docker", "--docker-host", endpoint, id];
+          temp = mkdtempSync(join(tmpdir(), "codex-image-"));
+          const archive = join(temp, "image.tar");
+          run("docker", ["image", "save", "--output", archive, id]);
+          return ["--input", archive];
         }
       },
       report,
       json ? 2 : 1,
     );
-    return report;
   } finally {
     if (temp) rmSync(temp, { recursive: true });
   }
@@ -928,7 +918,7 @@ const STRING_OPTIONS = [
 function jsonRequested(input: string[]): boolean {
   for (let index = 0; index < input.length; index++) {
     const arg = input[index];
-    if (arg === "--exec") break;
+    if (arg === "--exec" || arg === "--") break;
     if (arg === "--json") return true;
     if (arg === "--mount-git") {
       if (input[index + 1] && !input[index + 1].startsWith("-")) index++;

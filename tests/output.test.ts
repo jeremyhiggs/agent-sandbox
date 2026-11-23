@@ -5,6 +5,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -27,7 +28,9 @@ const args = process.argv.slice(2);
 fs.appendFileSync(process.env.JSON_TEST_LOG, JSON.stringify(args) + '\\n');
 const name = 'json-test';
 if (args[0] === 'inspect') console.log(JSON.stringify([{configuration:{id:name,labels:{'dev.agent-container.managed':'true','dev.agent-container.herdr':'false','dev.agent-container.checkout':'/workspace'}}}]));
-else if (args[0] === 'context') console.log('unix:///fixture/docker.sock');
+else if (args[0] === 'image' && args[1] === 'save') {
+  fs.writeFileSync(args[args.indexOf('--output')+1], JSON.stringify({image:args.at(-1),context:process.env.DOCKER_CONTEXT,host:process.env.DOCKER_HOST}));
+}
 else if (args[0] === 'image' && args[1] === 'inspect') {
   if (process.env.JSON_TEST_INSPECT_EXIT) process.exit(Number(process.env.JSON_TEST_INSPECT_EXIT));
   console.log('sha256:fixture linux/arm64');
@@ -57,8 +60,9 @@ if (args[0] === 'version') {
 }
 if (args[0] === 'convert') {
   console.log('native policy table');
-  process.exit(process.env.JSON_TEST_MIXED && args.at(-1).endsWith('-codex.json') ? 7 : process.env.JSON_TEST_FINDING ? 42 : 0);
+  process.exit(process.env.JSON_TEST_MIXED && args.at(-1).includes('-codex-') ? 7 : process.env.JSON_TEST_FINDING ? 42 : 0);
 }
+if (args[0] === 'image') fs.appendFileSync(process.env.JSON_TEST_LOG, JSON.stringify(['archive',JSON.parse(fs.readFileSync(args[args.indexOf('--input')+1],'utf8'))]) + '\\n');
 if (process.env.JSON_TEST_SCANNER_EXIT) process.exit(Number(process.env.JSON_TEST_SCANNER_EXIT));
 fs.writeFileSync(args[args.indexOf('--output')+1], JSON.stringify({Results:[]}));
 console.log('scanner progress');
@@ -120,7 +124,10 @@ test("creation resolves host checkout identities and explicit overrides without 
       {
         mount: true,
         flags: [],
-        extra: {},
+        extra: {
+          GIT_AUTHOR_DATE: "not-a-date",
+          GIT_COMMITTER_DATE: "not-a-date",
+        },
         expected: [
           "Checkout User",
           "checkout@example.invalid",
@@ -268,6 +275,7 @@ test("JSON help, version, skill and parsing failures need no runtime", () => {
     ["run", "--name", "bad/name", "--agent", "codex", "--prompt", "--json"],
     ["run", "--name", "bad/name", "--exec", "echo", "--json"],
     ["run", "--name", "--json"],
+    ["status", "--", "--json"],
   ]) {
     const literal = invoke(args, env);
     assert.equal(literal.status, 1);
@@ -398,14 +406,10 @@ test("JSON foreground exec streams output, consumes stdin and preserves nonzero 
     assert.equal(literal.stdout, "--json");
   }));
 
-test("JSON scan preserves reports on both success and vulnerability failure", () =>
+test("JSON scans preserve independent reports and export the selected Docker image", () =>
   fixture((_root, env) => {
     const image = `json-fixture-${process.pid}`;
-    const report = join(
-      ROOT,
-      ".artifacts",
-      `vulnerabilities-docker-${image}.json`,
-    );
+    const reports: string[] = [];
     try {
       for (const blocked of [false, true]) {
         const result = invoke(
@@ -414,14 +418,17 @@ test("JSON scan preserves reports on both success and vulnerability failure", ()
         );
         assert.equal(result.status, blocked ? 42 : 0, result.stderr);
         const output = JSON.parse(result.stdout);
-        assert.equal(output.data.report, report);
+        const report: string = output.data.report;
+        assert.ok(!reports.includes(report), "each invocation owns its report");
+        reports.push(report);
         assert.equal(output.ok, !blocked);
         assert.match(result.stderr, /Complete report:/);
         assert.ok(readFileSync(report, "utf8").includes('"Results"'));
-        const provenance = JSON.parse(
+        const observation = JSON.parse(
           readFileSync(report.replace(/\.json$/, ".trivy.json"), "utf8"),
         );
-        assert.equal(provenance.trivy.VulnerabilityDB.UpdatedAt, "after-scan");
+        assert.equal(observation.observation, "post-scan-cache");
+        assert.equal(observation.trivy.VulnerabilityDB.UpdatedAt, "after-scan");
       }
       const calls = readFileSync(env.JSON_TEST_LOG!, "utf8")
         .trim()
@@ -430,14 +437,16 @@ test("JSON scan preserves reports on both success and vulnerability failure", ()
       const scan = calls.find(
         (args) => args[0] === "trivy" && args[1] === "image",
       )!;
+      const save = calls.find(
+        (args) => args[0] === "image" && args[1] === "save",
+      )!;
+      assert.equal(save.at(-1), "sha256:fixture");
       assert.equal(
-        scan[scan.indexOf("--docker-host") + 1],
-        "unix:///fixture/docker.sock",
+        scan[scan.indexOf("--input") + 1],
+        save[save.indexOf("--output") + 1],
       );
-      assert.equal(scan[scan.indexOf("--image-src") + 1], "docker");
-      assert.equal(scan.at(-1), "sha256:fixture");
       assert.equal(scan[scan.indexOf("--scanners") + 1], "vuln,secret");
-      assert.ok(!calls.some((args) => args.includes("save")));
+      assert.ok(!scan.includes("--docker-host"));
       const scannerCalls = calls
         .filter((args) => args[0] === "trivy")
         .slice(0, 3);
@@ -445,31 +454,32 @@ test("JSON scan preserves reports on both success and vulnerability failure", ()
         scannerCalls.map((args) => args[1]),
         ["image", "version", "convert"],
       );
+      assert.equal(scannerCalls[2].at(-1), reports[0]);
       assert.equal(
         scannerCalls[2][scannerCalls[2].indexOf("--scanners") + 1],
         "vuln,secret",
       );
-      for (const [dockerEnv, endpoint] of [
-        [
-          { DOCKER_HOST: "unix:///override.sock", DOCKER_CONTEXT: "" },
-          "unix:///override.sock",
-        ],
-        [
-          { DOCKER_HOST: "unix:///ignored.sock", DOCKER_CONTEXT: "fixture" },
-          "unix:///fixture/docker.sock",
-        ],
-      ] as const) {
+      for (const dockerEnv of [
+        { DOCKER_HOST: "unix:///override.sock", DOCKER_CONTEXT: "" },
+        { DOCKER_HOST: "unix:///ignored.sock", DOCKER_CONTEXT: "ssh-fixture" },
+        { DOCKER_HOST: "", DOCKER_CONTEXT: "tls-fixture" },
+      ]) {
         const result = invoke(
           ["scan", "--engine", "docker", "--image", image, "--json"],
           { ...env, ...dockerEnv },
         );
         assert.equal(result.status, 0, result.stderr);
-        const lastScan = readFileSync(env.JSON_TEST_LOG!, "utf8")
+        reports.push(JSON.parse(result.stdout).data.report);
+        const archive = readFileSync(env.JSON_TEST_LOG!, "utf8")
           .trim()
           .split("\n")
-          .map((line) => JSON.parse(line) as string[])
-          .findLast((args) => args[0] === "trivy" && args[1] === "image")!;
-        assert.equal(lastScan[lastScan.indexOf("--docker-host") + 1], endpoint);
+          .map((line) => JSON.parse(line))
+          .findLast((args) => args[0] === "archive")[1];
+        assert.deepEqual(archive, {
+          image: "sha256:fixture",
+          context: dockerEnv.DOCKER_CONTEXT,
+          host: dockerEnv.DOCKER_HOST,
+        });
       }
       const failure = invoke(
         ["scan", "--engine", "docker", "--image", image, "--json"],
@@ -481,10 +491,8 @@ test("JSON scan preserves reports on both success and vulnerability failure", ()
         JSON.parse(failure.stdout).error.message,
         /execution failed/,
       );
-      assert.throws(() => readFileSync(report));
-      assert.throws(() =>
-        readFileSync(report.replace(/\.json$/, ".trivy.json")),
-      );
+      for (const report of reports)
+        assert.ok(readFileSync(report, "utf8").includes('"Results"'));
       const bin = env.PATH!.split(":")[0];
       chmodSync(join(bin, "trivy"), 0o644);
       const denied = invoke(
@@ -500,21 +508,19 @@ test("JSON scan preserves reports on both success and vulnerability failure", ()
       );
       assert.equal(missing.status, 127, missing.stderr);
       assert.equal(JSON.parse(missing.stdout).exit_code, 127);
-      writeFileSync(report, "old report");
-      writeFileSync(report.replace(/\.json$/, ".trivy.json"), "old provenance");
       const inspectFailure = invoke(
         ["scan", "--engine", "docker", "--image", image, "--json"],
         { ...env, JSON_TEST_INSPECT_EXIT: "9" },
       );
       assert.equal(inspectFailure.status, 9, inspectFailure.stderr);
       assert.equal(JSON.parse(inspectFailure.stdout).data, null);
-      assert.throws(() => readFileSync(report));
-      assert.throws(() =>
-        readFileSync(report.replace(/\.json$/, ".trivy.json")),
-      );
+      for (const report of reports)
+        assert.ok(readFileSync(report, "utf8").includes('"Results"'));
     } finally {
-      rmSync(report, { force: true });
-      rmSync(report.replace(/\.json$/, ".trivy.json"), { force: true });
+      for (const report of reports) {
+        rmSync(report, { force: true });
+        rmSync(report.replace(/\.json$/, ".trivy.json"), { force: true });
+      }
     }
   }));
 
@@ -536,15 +542,15 @@ test("repository audit preserves a post-scan metadata command failure", () =>
       },
     );
     assert.equal(result.status, 7, result.stderr);
-    assert.ok(
-      readFileSync(
-        join(root, ".artifacts/vulnerabilities-repo.json"),
-        "utf8",
-      ).includes('"Results"'),
+    const report = join(
+      root,
+      ".artifacts",
+      readdirSync(join(root, ".artifacts")).find((name) =>
+        name.startsWith("vulnerabilities-repo-"),
+      )!,
     );
-    assert.throws(() =>
-      readFileSync(join(root, ".artifacts/vulnerabilities-repo.trivy.json")),
-    );
+    assert.ok(readFileSync(report, "utf8").includes('"Results"'));
+    assert.throws(() => readFileSync(report.replace(/\.json$/, ".trivy.json")));
     const calls = readFileSync(env.JSON_TEST_LOG!, "utf8")
       .trim()
       .split("\n")
@@ -591,7 +597,13 @@ test("profile scans continue after findings and preserve execution-error precede
         readFileSync(
           join(
             root,
-            `.artifacts/vulnerabilities-docker-agent-sandbox-${profile}.json`,
+            ".artifacts",
+            readdirSync(join(root, ".artifacts")).find(
+              (name) =>
+                name.startsWith(
+                  `vulnerabilities-docker-agent-sandbox-${profile}-`,
+                ) && !name.endsWith(".trivy.json"),
+            )!,
           ),
           "utf8",
         ).includes('"Results"'),

@@ -161,11 +161,12 @@ Their version and guest-local state tests do not prove authenticated operation.
 
 Keep reports under ignored `.artifacts/`:
 
-- `vulnerabilities-{container,docker}-agent-sandbox-{base,codex,opencode,claude}.json`
-- `vulnerabilities-repo.json`
+- `vulnerabilities-{container,docker}-agent-sandbox-{base,codex,opencode,claude}-UUID.json`
+- `vulnerabilities-repo-UUID.json`
 - `vulnerabilities-*.trivy.json` for the scanner version, effective cache and
-  database metadata captured after each successful scan, including scans whose
-  findings fail policy.
+  database metadata observed after each successful scan, including scans whose
+  findings fail policy. This is a post-scan cache observation: another process
+  can refresh the shared database between the scan and the metadata read.
 - `browser-release.json`
 - `apko/sbom/` for native SPDX SBOMs.
 
@@ -181,10 +182,11 @@ unrun check is not a clean scan. The CLI's `--json` envelope remains separate fr
 Trivy's report; scanner output goes to stderr in this mode.
 
 Docker scans inspect the selected daemon, report the actual image ID/platform,
-and scan that ID through the same Docker endpoint with registry fallback disabled.
+and export that ID through the Docker CLI before scanning the archive. This
+preserves the selected context's SSH or TLS transport without registry fallback.
 Apple Container scans export its OCI layout because Trivy has no native Apple
-image source. Report names include the engine so its scan does not replace a
-report from the other image store. Docker runtime fixtures use `--pull=never` and `--rm`; automatic
+image source. Each invocation owns a unique report and sidecar path, so concurrent
+scans cannot replace each other's policy input. Docker runtime fixtures use `--pull=never` and `--rm`; automatic
 removal includes their anonymous volumes. These runtime checks exercise actual
 entry points separately from vulnerability scanning.
 
