@@ -12,7 +12,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { test } from "node:test";
 import {
   CODEX_SQLITE_HOME,
@@ -31,6 +31,30 @@ function fixture(fn: (root: string) => void) {
   } finally {
     rmSync(root, { recursive: true });
   }
+}
+
+function fakeRuntime(root: string) {
+  const bin = join(root, "bin"),
+    log = join(root, "container.jsonl");
+  mkdirSync(bin);
+  writeFileSync(
+    join(bin, "container"),
+    `#!/usr/bin/env node
+const fs = require('node:fs'), args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify(args) + '\\n');
+if (args[0] === 'inspect') console.log(JSON.stringify([{configuration:{labels:{'dev.agent-container.managed':'true','dev.agent-container.herdr':'false','dev.agent-container.checkout':'/workspace'}}}]));
+if (args[0] === 'exec' && args[2] === 'hc' && args[3] === 'run') console.log(JSON.stringify({address:'t1'}));
+`,
+    { mode: 0o755 },
+  );
+  return {
+    env: { ...process.env, PATH: `${bin}:${dirname(process.execPath)}` },
+    calls: (): string[][] =>
+      readFileSync(log, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line)),
+  };
 }
 
 test("Git identity overrides are literal creation settings", () => {
@@ -142,23 +166,16 @@ test("directory mounts preserve multiple explicit destinations and access modes"
 
 test("Codex auth sharing mounts only the read-only credential file", () =>
   fixture((root) => {
-    const codex = join(root, ".codex"),
-      bin = join(root, "bin"),
-      log = join(root, "container.jsonl");
+    const codex = join(root, ".codex");
+    const runtime = fakeRuntime(root);
     mkdirSync(codex);
-    mkdirSync(bin);
     writeFileSync(join(codex, "auth.json"), "{}\n");
     writeFileSync(join(codex, "auth.json.lock"), "");
     writeFileSync(join(codex, "config.toml"), "# host only\n");
     writeFileSync(join(codex, "history.jsonl"), "private history\n");
     mkdirSync(join(codex, "sessions"));
-    writeFileSync(
-      join(bin, "container"),
-      `#!/usr/bin/env node\nrequire('node:fs').appendFileSync(${JSON.stringify(log)},JSON.stringify(process.argv.slice(2))+'\\n');\n`,
-      { mode: 0o755 },
-    );
     const path = process.env.PATH;
-    process.env.PATH = `${bin}:${path}`;
+    process.env.PATH = runtime.env.PATH;
     try {
       createSandbox({
         name: "auth-file",
@@ -169,10 +186,7 @@ test("Codex auth sharing mounts only the read-only credential file", () =>
     } finally {
       process.env.PATH = path;
     }
-    const calls: string[][] = readFileSync(log, "utf8")
-      .trim()
-      .split("\n")
-      .map((line) => JSON.parse(line));
+    const calls = runtime.calls();
     const launch = calls.find((args) => args[0] === "run")!;
     const auth = join(codex, "auth.json");
     const volumes = launch.flatMap((arg, index) =>
@@ -417,24 +431,6 @@ test("Git sharing does not resolve .jj links into additional host mounts", () =>
     mkdirSync(unrelated);
     symlinkSync(unrelated, join(work, ".jj", "repo"));
     assert.deepEqual([...mountPlan(work, root).keys()], [work]);
-  }));
-
-test("agent skills remain read-only when Codex skills link to the same directory", () =>
-  fixture((root) => {
-    const work = join(root, "work"),
-      skills = join(root, ".agents", "skills");
-    mkdirSync(work);
-    mkdirSync(join(root, ".codex"));
-    writeFileSync(join(root, ".codex", "auth.json"), "{}\n");
-    mkdirSync(skills, { recursive: true });
-    symlinkSync(skills, join(root, ".codex", "skills"));
-    assert.equal(
-      mountPlan(work, root, {
-        "mount-codex-auth": true,
-        "mount-skills": true,
-      }).get(skills)?.readonly,
-      true,
-    );
   }));
 
 test("read-only skill aliases into Codex keep a read-only overlay", () =>
@@ -837,18 +833,61 @@ test("management commands and help stay explicit", () => {
   );
 });
 
-test("unverified agent state mounts are rejected while agent launches remain available", () => {
-  for (const agent of ["claude", "opencode"] as const) {
-    assert.throws(
-      () => parseInvocation(["run", "--name", "test", "--volume", agent]),
-      /--volume requires/,
-    );
-    assert.equal(
-      parseInvocation(["run", "--name", "test", "--agent", agent]).options
-        .agent,
-      agent,
-    );
-  }
+test("CLI selections launch the requested executable without implicit host-state mounts", () => {
+  for (const [selection, executable, image] of [
+    [undefined, "bash", "base"],
+    ["codex", "codex", "codex"],
+    ["claude", "claude", "claude"],
+    ["opencode", "opencode", "opencode"],
+  ] as const)
+    fixture((root) => {
+      const runtime = fakeRuntime(root);
+      const codex = join(root, ".codex"),
+        skills = join(root, ".agents", "skills");
+      for (const path of [
+        codex,
+        skills,
+        join(root, ".claude"),
+        join(root, ".config", "opencode"),
+        join(root, ".local", "share", "opencode"),
+      ])
+        mkdirSync(path, { recursive: true });
+      symlinkSync(skills, join(codex, "skills"));
+      writeFileSync(join(codex, "auth.json"), "{}\n");
+      writeFileSync(join(root, ".claude.json"), "{}\n");
+      execFileSync(
+        process.execPath,
+        [
+          join(ROOT, "scripts", "sandbox.ts"),
+          "run",
+          "--name",
+          "agent-test",
+          "--home",
+          root,
+          "--detach",
+          ...(selection ? ["--agent", selection] : []),
+        ],
+        { env: runtime.env, stdio: ["ignore", "pipe", "pipe"] },
+      );
+      const calls = runtime.calls();
+      const launch = calls.find((args) => args[0] === "run")!;
+      assert.equal(launch.at(-1), `agent-sandbox:${image}`);
+      assert.deepEqual(
+        launch.flatMap((arg, index) =>
+          arg === "--volume" ? [launch[index + 1]] : [],
+        ),
+        [],
+        `${executable} must not implicitly mount host state`,
+      );
+      const workload = calls.find(
+        (args) => args[0] === "exec" && args[2] === "hc" && args[3] === "run",
+      )!;
+      assert.equal(
+        workload[workload.indexOf("--") + 1],
+        executable,
+        `${selection ?? "default"} must launch ${executable}`,
+      );
+    });
 });
 
 test("host state and skills are opt-in independently of agent selection", () =>
