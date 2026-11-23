@@ -8,6 +8,17 @@ export const PROFILE_PACKAGES = {
   claude: { dependency: "@anthropic-ai/claude-code", variable: "CLAUDE" },
 } as const;
 
+export const PROFILES = Object.keys(PROFILE_PACKAGES) as unknown as readonly [
+  "base",
+  "codex",
+  "opencode",
+  "claude",
+];
+export type Agent = Exclude<keyof typeof PROFILE_PACKAGES, "base">;
+export const AGENTS = PROFILES.filter(
+  (profile): profile is Agent => profile !== "base",
+);
+
 export type ApkoLock = {
   contents: {
     packages: { name: string; version: string; architecture: string }[];

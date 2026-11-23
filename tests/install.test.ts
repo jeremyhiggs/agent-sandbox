@@ -22,7 +22,6 @@ test("installation copies a standalone runtime, upgrades its shim and protects u
     source = join(root, "source"),
     installation = join(root, "installed runtime");
   mkdirSync(bin);
-  // Keep trust changes inside the fixture; exercise the generated shell shim.
   writeFileSync(
     join(bin, "mise"),
     '#!/bin/sh\nif [ "$1" = trust ]; then exit 0; fi\n[ "$1" = -C ] || exit 1\ncd "$2" || exit\nshift 2\n[ "$1" = exec ] || exit 1\nshift 2\nexec "$@"\n',
@@ -46,7 +45,6 @@ test("installation copies a standalone runtime, upgrades its shim and protects u
     );
   try {
     install(ROOT, source);
-    // Reproduce the previous checkout-linked launcher for migration coverage.
     const shim = join(bin, "agent-sandbox");
     const sourceShim = readFileSync(shim, "utf8");
     writeFileSync(join(source, ".env"), "PRIVATE_FIXTURE=true\n");
@@ -89,8 +87,15 @@ test("installation copies a standalone runtime, upgrades its shim and protects u
     );
     assert.notEqual(git.status, 0);
     assert.match(git.stderr, /No Git checkout found/);
-    // Reinstall from a new source path; the installed shim stays valid.
+    writeFileSync(
+      join(root, "moved-source", "skills", "agent-sandbox", "SKILL.md"),
+      "# Updated fixture guidance\n",
+    );
     install(join(root, "moved-source"), installation);
+    assert.equal(
+      execFileSync(shim, ["--skill"], { cwd: root, env, encoding: "utf8" }),
+      "# Updated fixture guidance\n",
+    );
     writeFileSync(shim, "unrelated command\n");
     assert.throws(() => install(ROOT, installation), /existing command/);
     assert.equal(readFileSync(shim, "utf8"), "unrelated command\n");

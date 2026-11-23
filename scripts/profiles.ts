@@ -1,13 +1,9 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import {
-  buildImage,
-  PROFILES,
-  prepareBuild,
-  ROOT,
-  scanImage,
-} from "./sandbox.ts";
-import { POLICY_EXIT_CODE } from "./vulnerabilities.ts";
+import { PROFILES } from "../image/packages.ts";
+import { buildImage, prepareBuild, ROOT } from "./build-os.ts";
+import { failureExitCode } from "./process.ts";
+import { POLICY_EXIT_CODE, scanImage } from "./vulnerabilities.ts";
 
 const [command, engine = "container"] = process.argv.slice(2);
 if (!["container", "docker"].includes(engine))
@@ -57,18 +53,11 @@ for (const profile of PROFILES) {
   try {
     runProfile();
   } catch (error) {
-    const failure = error as Error & {
-      exitCode?: number;
-      status?: number;
-      code?: string;
-    };
+    const failure = error as Error;
     if (command === "scan") console.error(failure.message);
     failed.push({
       profile,
-      exitCode:
-        failure.exitCode ??
-        failure.status ??
-        (failure.code === "ENOENT" ? 127 : failure.code === "EACCES" ? 126 : 1),
+      exitCode: failureExitCode(failure),
     });
   }
 }

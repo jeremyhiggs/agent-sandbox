@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Verify the standalone executable before running any downloaded code.
 case "$RUNNER_ARCH" in
   ARM64)
     arch=arm64
@@ -23,7 +22,6 @@ curl -fsSL "https://github.com/jdx/mise/releases/download/v2026.11.7/mise-v2026.
 printf '%s  %s\n' "$checksum" "$binary" | sha256sum -c -
 chmod 755 "$binary"
 
-# Fresh tools and no restored cache: every first install uses the committed locks.
 export MISE_DATA_DIR="$tool_dir/data"
 printf 'MISE_DATA_DIR=%s\n' "$MISE_DATA_DIR" >>"$GITHUB_ENV"
 printf '%s\n' "$tool_dir/bin" >>"$GITHUB_PATH"

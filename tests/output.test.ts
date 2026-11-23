@@ -27,15 +27,18 @@ const fs = require('node:fs'), cp = require('node:child_process');
 const args = process.argv.slice(2);
 fs.appendFileSync(process.env.JSON_TEST_LOG, JSON.stringify(args) + '\\n');
 const name = 'json-test';
-if (args[0] === 'inspect') console.log(JSON.stringify([{configuration:{id:name,labels:{'dev.agent-container.managed':'true','dev.agent-container.herdr':'false','dev.agent-container.checkout':'/workspace'}}}]));
+if (args[0] === 'inspect') console.log(JSON.stringify([{configuration:{id:name,labels:process.env.JSON_TEST_LABELS ? JSON.parse(process.env.JSON_TEST_LABELS) : {'dev.agent-container.managed':'true','dev.agent-container.herdr':'false','dev.agent-container.checkout':'/workspace'}}}]));
 else if (args[0] === 'image' && args[1] === 'save') {
   fs.writeFileSync(args[args.indexOf('--output')+1], JSON.stringify({image:args.at(-1),context:process.env.DOCKER_CONTEXT,host:process.env.DOCKER_HOST}));
 }
 else if (args[0] === 'image' && args[1] === 'inspect') {
   if (process.env.JSON_TEST_INSPECT_EXIT) process.exit(Number(process.env.JSON_TEST_INSPECT_EXIT));
-  console.log('sha256:fixture linux/arm64');
+  const images = {'fixture/requested:dev':'sha256:requested','agent-sandbox:base':'sha256:base','agent-sandbox:codex':'sha256:codex','agent-sandbox:opencode':'sha256:opencode','agent-sandbox:claude':'sha256:claude'};
+  const digest = images[args.at(-1)];
+  if (!digest) { console.error('Unexpected image reference: ' + args.at(-1)); process.exit(8); }
+  console.log(digest + ' linux/arm64');
 }
-else if (args[0] === 'ls') console.log(JSON.stringify([{configuration:{id:name,labels:{'dev.agent-container.managed':'true'},private:'must not leak'},status:{state:'running'}},{configuration:{id:'unrelated',labels:{}},status:{state:'running'}}]));
+else if (args[0] === 'ls') console.log(JSON.stringify([{configuration:{id:name,labels:{'dev.agent-container.managed':'true'},private:'must not leak'},status:{state:'running'}},{configuration:{id:'legacy',labels:{'dev.codex-sandbox.managed':'true'}},status:{state:'stopped'}},{configuration:{id:'unrelated',labels:{}},status:{state:'running'}},{configuration:{id:'boolean-label',labels:{'dev.agent-container.managed':true}},status:{state:'running'}}]));
 else if (args[0] === 'exec') {
   const at = args.indexOf(name), command = args.slice(at + 1);
   if (command[0] === 'hc') {
@@ -341,7 +344,10 @@ test("JSON lifecycle results stay structured and invalid interactive requests ha
     const list = invoke(["status", "--json"], env);
     assert.equal(list.status, 0, list.stderr);
     assert.deepEqual(JSON.parse(list.stdout).data, {
-      sandboxes: [{ name: "json-test", state: "running" }],
+      sandboxes: [
+        { name: "json-test", state: "running" },
+        { name: "legacy", state: "stopped" },
+      ],
     });
     const terminals = invoke(
       ["terminals", "--name", "json-test", "--json"],
@@ -358,6 +364,118 @@ test("JSON lifecycle results stay structured and invalid interactive requests ha
     const normal = invoke(["shell", "--name", "json-test", "--detach"], env);
     assert.equal(normal.status, 0, normal.stderr);
     assert.equal(normal.stdout, "t7\n");
+  }));
+
+test("guest access requires an exact current or legacy ownership label", () =>
+  fixture((_root, env) => {
+    for (const [labels, accepted] of [
+      [{ "dev.agent-container.managed": "true" }, true],
+      [{ "dev.codex-sandbox.managed": "true" }, true],
+      [{ "dev.agent-container.managed": "false" }, false],
+      [{ "dev.agent-container.managed": true }, false],
+      [{}, false],
+    ] as const) {
+      writeFileSync(env.JSON_TEST_LOG!, "");
+      const result = invoke(["terminals", "--name", "json-test", "--json"], {
+        ...env,
+        JSON_TEST_LABELS: JSON.stringify(labels),
+      });
+      assert.equal(result.status, accepted ? 0 : 1, result.stderr);
+      const output = JSON.parse(result.stdout);
+      assert.equal(output.ok, accepted);
+      if (accepted)
+        assert.deepEqual(output.data.terminals, [
+          { address: "t7", name: "fixture" },
+        ]);
+      else {
+        assert.match(
+          output.error.message,
+          /Guest is not owned by this launcher/,
+        );
+        const calls = readFileSync(env.JSON_TEST_LOG!, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line) as string[]);
+        assert.ok(
+          !calls.some((args) => args[0] === "exec"),
+          "unowned guests must not be executed",
+        );
+      }
+    }
+  }));
+
+test("failed Herdr registration deletes only its new container and preserves existing machines", () =>
+  fixture((root, env) => {
+    writeFileSync(
+      join(root, "bin", "hc"),
+      `#!${process.execPath}
+const fs = require('node:fs'), args = process.argv.slice(2);
+fs.appendFileSync(process.env.JSON_TEST_LOG, JSON.stringify(['hc', ...args]) + '\\n');
+if (args[0] === 'machine' && args[1] === 'ls') {
+  console.log(JSON.stringify({machines: process.env.JSON_TEST_REGISTRATION === 'conflict' ? [{name:'json-test',via:true,target:'existing-transport'}] : [{name:'unrelated',via:true,target:'preserved-transport'}]}));
+} else if (args[0] === 'machine' && args[1] === 'add') {
+  console.error('fixture registration failed'); process.exit(17);
+} else if (args[0] === 'machine' && args[1] === 'rm') process.exit(0);
+else { console.error('Unexpected hc command'); process.exit(91); }
+`,
+      { mode: 0o755 },
+    );
+    for (const [scenario, status] of [
+      ["conflict", 1],
+      ["add-failure", 17],
+    ] as const) {
+      writeFileSync(env.JSON_TEST_LOG!, "");
+      const result = invoke(
+        [
+          "run",
+          "--name",
+          "json-test",
+          "--home",
+          root,
+          "--herdr",
+          "--hc-session",
+          "fixture-session",
+          "--detach",
+          "--json",
+        ],
+        {
+          ...env,
+          JSON_TEST_REGISTRATION: scenario,
+          JSON_TEST_LABELS: JSON.stringify({
+            "dev.agent-container.managed": "true",
+            "dev.agent-container.herdr": "true",
+            "dev.agent-container.checkout": "/workspace",
+          }),
+        },
+      );
+      assert.equal(result.status, status, result.stderr);
+      const output = JSON.parse(result.stdout);
+      assert.equal(output.ok, false);
+      assert.match(
+        output.error.message,
+        scenario === "conflict"
+          ? /already exists with another transport/
+          : /Command failed: hc machine add/,
+      );
+      if (scenario === "add-failure")
+        assert.match(result.stderr, /fixture registration failed/);
+      const calls = readFileSync(env.JSON_TEST_LOG!, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as string[]);
+      assert.equal(calls.filter((args) => args[0] === "run").length, 1);
+      assert.deepEqual(
+        calls.filter((args) => args[0] === "delete"),
+        [["delete", "--force", "json-test"]],
+      );
+      assert.ok(
+        !calls.some(
+          (args) =>
+            args[0] === "hc" && args[1] === "machine" && args[2] === "rm",
+        ),
+        "rollback must preserve existing host machines",
+      );
+    }
   }));
 
 test("JSON foreground exec streams output, consumes stdin and preserves nonzero exit codes", () =>
@@ -408,7 +526,7 @@ test("JSON foreground exec streams output, consumes stdin and preserves nonzero 
 
 test("JSON scans preserve independent reports and export the selected Docker image", () =>
   fixture((_root, env) => {
-    const image = `json-fixture-${process.pid}`;
+    const image = "fixture/requested:dev";
     const reports: string[] = [];
     try {
       for (const blocked of [false, true]) {
@@ -440,7 +558,7 @@ test("JSON scans preserve independent reports and export the selected Docker ima
       const save = calls.find(
         (args) => args[0] === "image" && args[1] === "save",
       )!;
-      assert.equal(save.at(-1), "sha256:fixture");
+      assert.equal(save.at(-1), "sha256:requested");
       assert.equal(
         scan[scan.indexOf("--input") + 1],
         save[save.indexOf("--output") + 1],
@@ -476,7 +594,7 @@ test("JSON scans preserve independent reports and export the selected Docker ima
           .map((line) => JSON.parse(line))
           .findLast((args) => args[0] === "archive")[1];
         assert.deepEqual(archive, {
-          image: "sha256:fixture",
+          image: "sha256:requested",
           context: dockerEnv.DOCKER_CONTEXT,
           host: dockerEnv.DOCKER_HOST,
         });
@@ -530,6 +648,7 @@ test("repository audit preserves a post-scan metadata command failure", () =>
     for (const file of [
       "scripts/security.ts",
       "scripts/vulnerabilities.ts",
+      "scripts/process.ts",
       ".trivyignore.yaml",
     ])
       copyFileSync(join(ROOT, file), join(root, file));
@@ -563,11 +682,13 @@ test("repository audit preserves a post-scan metadata command failure", () =>
 test("profile scans continue after findings and preserve execution-error precedence", () =>
   fixture((root, env) => {
     mkdirSync(join(root, "scripts"));
+    mkdirSync(join(root, "image"));
     for (const file of [
+      "image/packages.ts",
       "scripts/profiles.ts",
-      "scripts/sandbox.ts",
       "scripts/build-os.ts",
       "scripts/vulnerabilities.ts",
+      "scripts/process.ts",
       ".trivyignore.yaml",
     ])
       copyFileSync(join(ROOT, file), join(root, file));
@@ -591,6 +712,12 @@ test("profile scans continue after findings and preserve execution-error precede
     assert.equal(
       calls.filter((args) => args[0] === "trivy" && args[1] === "image").length,
       4,
+    );
+    assert.deepEqual(
+      calls
+        .filter((args) => args[0] === "archive")
+        .map((args) => (args[1] as unknown as { image: string }).image),
+      ["sha256:base", "sha256:codex", "sha256:opencode", "sha256:claude"],
     );
     for (const profile of ["base", "codex", "opencode", "claude"])
       assert.ok(

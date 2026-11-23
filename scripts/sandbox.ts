@@ -5,16 +5,13 @@ import {
   constants,
   existsSync,
   lstatSync,
-  mkdirSync,
-  mkdtempSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
-  rmSync,
   statSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import {
   basename,
   delimiter,
@@ -26,13 +23,15 @@ import {
 } from "node:path";
 import { pathToFileURL } from "node:url";
 import { parseArgs } from "node:util";
-import { buildOS } from "./build-os.ts";
-import { scanWithTrivy } from "./vulnerabilities.ts";
+import { AGENTS, type Agent } from "../image/packages.ts";
+import { buildImage, DEFAULT_DNS, prepareBuild, ROOT } from "./build-os.ts";
+import { failureExitCode, run } from "./process.ts";
+import { scanImage } from "./vulnerabilities.ts";
 
-export const ROOT = resolve(import.meta.dirname, "..");
-export const PROFILES = ["base", "codex", "opencode", "claude"] as const;
-export type Agent = "codex" | "opencode" | "claude";
-export const DEFAULT_DNS = process.env.CONTAINER_DNS ?? "1.1.1.1";
+export { type Agent, PROFILES } from "../image/packages.ts";
+export { buildImage, DEFAULT_DNS, prepareBuild, ROOT } from "./build-os.ts";
+export { run } from "./process.ts";
+export { scanImage } from "./vulnerabilities.ts";
 export const CODEX_SQLITE_HOME = "/var/lib/agent-sandbox/codex";
 const CODEX_AUTH_FILE = "auth.json";
 const LABEL = "dev.agent-container.managed";
@@ -45,12 +44,6 @@ const VIA_LABEL = "dev.agent-container.hc-via";
 const SPACE_LABEL = "dev.agent-container.herdr-space";
 const TAB_LABEL = "dev.agent-container.herdr-tab";
 
-export function run(command: string, args: string[]): string {
-  return execFileSync(command, args, {
-    encoding: "utf8",
-    stdio: ["inherit", "pipe", "inherit"],
-  });
-}
 function inside(path: string, parent: string): boolean {
   return (
     path === parent ||
@@ -509,13 +502,17 @@ function gitIdentityEnvironment(
   return values;
 }
 
-function sandboxInfo(name: string) {
+function isManaged(labels?: Labels): boolean {
+  return labels?.[LABEL] === "true" || labels?.[LEGACY_LABEL] === "true";
+}
+
+function sandboxLabels(name: string): Labels {
   requireName(name);
   const info = JSON.parse(run("container", ["inspect", name]))[0];
   const labels: Labels = info.configuration.labels ?? {};
-  if (labels[LABEL] !== "true" && labels[LEGACY_LABEL] !== "true")
+  if (!isManaged(labels))
     throw new Error(`Guest is not owned by this launcher: ${name}`);
-  return { info, labels };
+  return labels;
 }
 
 function appTarget(
@@ -644,7 +641,6 @@ export function createSandbox(options: Options): string {
       ]);
     registerSandbox(name, labels);
   } catch (error) {
-    // Registration is the last operation; a failed add must not remove an existing machine.
     run(container, ["delete", "--force", name]);
     throw error;
   }
@@ -652,7 +648,7 @@ export function createSandbox(options: Options): string {
 }
 
 export function stop(name: string, remove = false): void {
-  const { labels } = sandboxInfo(name);
+  const labels = sandboxLabels(name);
   try {
     if (labels[HERDR_LABEL] === "true" || labels[LEGACY_LABEL] === "true") {
       const machines = JSON.parse(hostHC(labels, ["machine", "ls", "--json"]));
@@ -670,104 +666,6 @@ export function stop(name: string, remove = false): void {
     }
   } finally {
     run("container", remove ? ["delete", "--force", name] : ["stop", name]);
-  }
-}
-
-export function prepareBuild(stdout: 1 | 2 = 1): string {
-  execFileSync("node", [join(ROOT, "scripts", "check-locks.ts")], {
-    stdio: ["inherit", stdout, 2],
-  });
-  return buildOS(stdout);
-}
-
-export function buildImage(
-  options: Pick<Options, "engine" | "profile" | "image" | "dns">,
-  osArchive: string,
-  stdout: 1 | 2 = 1,
-): void {
-  const engine = options.engine ?? "container";
-  const variant = options.profile ?? "base";
-  if (!(PROFILES as readonly string[]).includes(variant))
-    throw new Error("Use --profile base|codex|opencode|claude");
-  const args = [
-    "build",
-    "--build-arg",
-    `OS_ARCHIVE=${osArchive}`,
-    "--pull",
-    "--tag",
-    options.image ?? `agent-sandbox:${variant}`,
-    "--target",
-    variant,
-  ];
-  for (const name of [
-    "MISE_BASE",
-    "BROWSER_SHA256_ARM64",
-    "BROWSER_SHA256_AMD64",
-    "PNPM_VERSION",
-    "BROWSER_VERSION",
-    "CODEX_VERSION",
-    "OPENCODE_VERSION",
-    "CLAUDE_VERSION",
-    "AGENT_BROWSER_VERSION",
-    "HC_VERSION",
-  ]) {
-    const value = process.env[`IMAGE_${name}`];
-    if (!value) throw new Error(`Missing IMAGE_${name}; run through mise`);
-    args.push("--build-arg", `${name}=${value}`);
-  }
-  if (engine === "container") args.push("--dns", options.dns ?? DEFAULT_DNS);
-  else if (options.dns)
-    throw new Error("Build --dns is supported only by Apple's runtime");
-  execFileSync(engine, [...args, ROOT], { stdio: ["inherit", stdout, 2] });
-}
-
-export function scanImage(engine: string, image: string, json = false): string {
-  const artifacts = join(ROOT, ".artifacts");
-  mkdirSync(artifacts, { recursive: true });
-  const report = join(
-    artifacts,
-    `vulnerabilities-${engine}-${image.replace(/[^a-zA-Z0-9_-]/g, "-")}.json`,
-  );
-  let temp: string | undefined;
-  try {
-    return scanWithTrivy(
-      "image",
-      () => {
-        if (engine === "container") {
-          // Apple exports an OCI tar; Trivy expects an unpacked OCI layout.
-          temp = mkdtempSync(join(tmpdir(), "codex-image-"));
-          const archive = join(temp, "image.tar");
-          run(engine, ["image", "save", "--output", archive, image]);
-          const input = join(temp, "oci");
-          mkdirSync(input);
-          run("tar", ["-xf", archive, "-C", input]);
-          rmSync(archive);
-          return ["--input", input];
-        } else {
-          const identity = run("docker", [
-            "image",
-            "inspect",
-            "--format",
-            "{{.Id}} {{.Os}}/{{.Architecture}}",
-            image,
-          ]).trim();
-          const [id, platform] = identity.split(/\s+/);
-          if (!id || !platform)
-            throw new Error("Docker returned no image identity/platform");
-          (json ? console.error : console.log)(
-            `Scanning Docker image ${id} (${platform})`,
-          );
-          temp = mkdtempSync(join(tmpdir(), "codex-image-"));
-          const archive = join(temp, "image.tar");
-          run("docker", ["image", "save", "--output", archive, id]);
-          return ["--input", archive];
-        }
-      },
-      report,
-      json ? 2 : 1,
-    );
-  } finally {
-    if (temp) rmSync(temp, { recursive: true });
   }
 }
 
@@ -798,7 +696,7 @@ async function workload(
   options: Options,
   custom: boolean,
 ): Promise<{ exitCode: number; terminal?: string }> {
-  const { labels } = sandboxInfo(name);
+  const labels = sandboxLabels(name);
   const checkout = labels[CHECKOUT_LABEL] ?? "/";
   if (options["herdr-space"]) {
     if (labels[HERDR_LABEL] !== "true")
@@ -1077,7 +975,7 @@ export function parseInvocation(input: string[]) {
   )
     throw new Error("--detach is supported by run, start and shell");
   for (const mount of options.volume ?? []) directoryMount(mount);
-  if (options.agent && !["codex", "opencode", "claude"].includes(options.agent))
+  if (options.agent && !(AGENTS as readonly string[]).includes(options.agent))
     throw new Error(`Unknown agent: ${options.agent}`);
   if (options.prompt !== undefined && !options.agent)
     throw new Error("--prompt requires --agent");
@@ -1209,10 +1107,7 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
       for (const item of JSON.parse(
         run("container", ["ls", "--all", "--format", "json"]),
       ))
-        if (
-          item.configuration.labels?.[LABEL] === "true" ||
-          item.configuration.labels?.[LEGACY_LABEL] === "true"
-        ) {
+        if (isManaged(item.configuration.labels)) {
           sandboxes.push({
             name: item.configuration.id,
             state: item.status.state,
@@ -1229,7 +1124,7 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
       return;
     }
     if (command === "terminals") {
-      sandboxInfo(existing!);
+      sandboxLabels(existing!);
       const text = run("container", [
         "exec",
         existing!,
@@ -1271,7 +1166,7 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
         "Interactive terminals require a TTY; use --detach or --exec for scripts and pipes",
       );
     if (command === "attach") {
-      sandboxInfo(existing!);
+      sandboxLabels(existing!);
       process.exitCode = await foreground("container", [
         "exec",
         "-it",
@@ -1286,7 +1181,7 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
     if (command === "run") {
       name = createSandbox(options);
     } else if (command === "start") {
-      const { labels } = sandboxInfo(name);
+      const labels = sandboxLabels(name);
       run("container", ["start", name]);
       registerSandbox(name, labels);
     }
@@ -1303,15 +1198,7 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const failure = error as {
-      exitCode?: number;
-      status?: number;
-      code?: string;
-    };
-    const exitCode =
-      failure.exitCode ??
-      failure.status ??
-      (failure.code === "ENOENT" ? 127 : failure.code === "EACCES" ? 126 : 1);
+    const exitCode = failureExitCode(error);
     if (jsonRequested(input)) {
       const data =
         error && typeof error === "object" && "report" in error

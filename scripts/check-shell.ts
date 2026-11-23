@@ -3,7 +3,6 @@ import { lstatSync } from "node:fs";
 import { join } from "node:path";
 
 const root = join(import.meta.dirname, "..");
-// Include new scripts before staging, respect ignores, and omit deleted paths.
 const scripts = execFileSync(
   "git",
   [

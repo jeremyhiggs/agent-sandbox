@@ -1,23 +1,20 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
-const ignorefile = join(import.meta.dirname, "..", ".trivyignore.yaml");
+import { failureExitCode, run } from "./process.ts";
+
+const ROOT = join(import.meta.dirname, "..");
+const ignorefile = join(ROOT, ".trivyignore.yaml");
 const severities = "UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL";
 export const POLICY_EXIT_CODE = 42;
 
 function trivy(args: string[], stdout: 1 | 2): number {
   const result = spawnSync("trivy", args, { stdio: ["inherit", stdout, 2] });
   const error = result.error as NodeJS.ErrnoException | undefined;
-  return error
-    ? error.code === "ENOENT"
-      ? 127
-      : error.code === "EACCES"
-        ? 126
-        : 1
-    : (result.status ?? 1);
+  return error ? failureExitCode({ code: error.code }) : (result.status ?? 1);
 }
 
 export function checkVulnerabilities(
@@ -54,8 +51,6 @@ export function checkVulnerabilities(
     );
 }
 
-// Save the complete native report, then let Trivy render and enforce policy.
-// Conversion reuses that scan rather than scanning again with a different DB.
 export function scanWithTrivy(
   command: "fs" | "image",
   args: string[] | (() => string[]),
@@ -112,9 +107,10 @@ export function scanWithTrivy(
     );
   } catch (error) {
     const failure = error as NodeJS.ErrnoException & { status?: number };
-    const exitCode =
-      failure.status ??
-      (failure.code === "ENOENT" ? 127 : failure.code === "EACCES" ? 126 : 1);
+    const exitCode = failureExitCode({
+      status: failure.status,
+      code: failure.code,
+    });
     throw Object.assign(
       new Error(
         `Trivy metadata capture failed (exit ${exitCode}); complete report: ${report}`,
@@ -140,4 +136,54 @@ export function scanWithTrivy(
   );
   checkVulnerabilities(report, stdout, scanners);
   return report;
+}
+
+export function scanImage(engine: string, image: string, json = false): string {
+  const artifacts = join(ROOT, ".artifacts");
+  mkdirSync(artifacts, { recursive: true });
+  const report = join(
+    artifacts,
+    `vulnerabilities-${engine}-${image.replace(/[^a-zA-Z0-9_-]/g, "-")}.json`,
+  );
+  let temp: string | undefined;
+  try {
+    return scanWithTrivy(
+      "image",
+      () => {
+        if (engine === "container") {
+          // Apple exports an OCI tar; Trivy expects an unpacked OCI layout.
+          temp = mkdtempSync(join(tmpdir(), "codex-image-"));
+          const archive = join(temp, "image.tar");
+          run(engine, ["image", "save", "--output", archive, image]);
+          const input = join(temp, "oci");
+          mkdirSync(input);
+          run("tar", ["-xf", archive, "-C", input]);
+          rmSync(archive);
+          return ["--input", input];
+        } else {
+          const identity = run("docker", [
+            "image",
+            "inspect",
+            "--format",
+            "{{.Id}} {{.Os}}/{{.Architecture}}",
+            image,
+          ]).trim();
+          const [id, platform] = identity.split(/\s+/);
+          if (!id || !platform)
+            throw new Error("Docker returned no image identity/platform");
+          (json ? console.error : console.log)(
+            `Scanning Docker image ${id} (${platform})`,
+          );
+          temp = mkdtempSync(join(tmpdir(), "codex-image-"));
+          const archive = join(temp, "image.tar");
+          run("docker", ["image", "save", "--output", archive, id]);
+          return ["--input", archive];
+        }
+      },
+      report,
+      json ? 2 : 1,
+    );
+  } finally {
+    if (temp) rmSync(temp, { recursive: true });
+  }
 }

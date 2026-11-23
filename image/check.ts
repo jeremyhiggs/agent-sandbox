@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
+  AGENTS,
   installedPackages,
   packagePins,
   verifyPackageInventory,
@@ -44,7 +45,7 @@ assert.ok(
       (Number(version[1]) === 10 && Number(version[2]) >= 4)),
   `OpenSSH 10.4 or newer is required: ${ssh.stderr}`,
 );
-for (const agent of ["codex", "opencode", "claude"]) {
+for (const agent of AGENTS) {
   if (agent === process.env.IMAGE_AGENT) {
     execFileSync(agent, ["--version"], { stdio: "inherit" });
     const flags =

@@ -9,7 +9,59 @@ import {
   rmSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, join, resolve } from "node:path";
+import { PROFILES } from "../image/packages.ts";
+
+export const ROOT = resolve(import.meta.dirname, "..");
+export const DEFAULT_DNS = process.env.CONTAINER_DNS ?? "1.1.1.1";
+
+export function prepareBuild(stdout: 1 | 2 = 1): string {
+  execFileSync("node", [join(ROOT, "scripts", "check-locks.ts")], {
+    stdio: ["inherit", stdout, 2],
+  });
+  return buildOS(stdout);
+}
+
+export function buildImage(
+  options: { engine?: string; profile?: string; image?: string; dns?: string },
+  osArchive: string,
+  stdout: 1 | 2 = 1,
+): void {
+  const engine = options.engine ?? "container";
+  const variant = options.profile ?? "base";
+  if (!(PROFILES as readonly string[]).includes(variant))
+    throw new Error("Use --profile base|codex|opencode|claude");
+  const args = [
+    "build",
+    "--build-arg",
+    `OS_ARCHIVE=${osArchive}`,
+    "--pull",
+    "--tag",
+    options.image ?? `agent-sandbox:${variant}`,
+    "--target",
+    variant,
+  ];
+  for (const name of [
+    "MISE_BASE",
+    "BROWSER_SHA256_ARM64",
+    "BROWSER_SHA256_AMD64",
+    "PNPM_VERSION",
+    "BROWSER_VERSION",
+    "CODEX_VERSION",
+    "OPENCODE_VERSION",
+    "CLAUDE_VERSION",
+    "AGENT_BROWSER_VERSION",
+    "HC_VERSION",
+  ]) {
+    const value = process.env[`IMAGE_${name}`];
+    if (!value) throw new Error(`Missing IMAGE_${name}; run through mise`);
+    args.push("--build-arg", `${name}=${value}`);
+  }
+  if (engine === "container") args.push("--dns", options.dns ?? DEFAULT_DNS);
+  else if (options.dns)
+    throw new Error("Build --dns is supported only by Apple's runtime");
+  execFileSync(engine, [...args, ROOT], { stdio: ["inherit", stdout, 2] });
+}
 
 export function buildOS(stdout: 1 | 2 = 1): string {
   const root = join(import.meta.dirname, "..");
