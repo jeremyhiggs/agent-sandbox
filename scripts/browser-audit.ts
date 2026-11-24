@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 const endpoint =
   "https://chromereleases.googleblog.com/feeds/posts/default/-/Desktop%20Update/Stable%20updates";
 
-type Advisory = { id: string; severity: string };
+type Advisory = { id: string; severity: string; issue?: string };
 type Release = { version: string; url: string; advisories: Advisory[] };
 type Feed = {
   feed: {
@@ -34,15 +34,14 @@ export function chromeRelease(html: string, url: string): Release | undefined {
       : undefined);
   if (!version) return undefined;
 
-  const advisories = Array.from(
-    text.matchAll(
-      /\b(low|medium|moderate|high|critical)\s+(CVE-\d{4}-\d{4,})\b/gi,
-    ),
-    ([, severity, id]) => ({
-      id: id.toUpperCase(),
-      severity: severity.toLowerCase(),
-    }),
-  );
+  const advisories: Advisory[] = [];
+  for (const [, issueId, severity, cve] of text.matchAll(
+    /(?:\[\s*(\d+)\s*\]\s*)?\b(low|medium|moderate|high|critical)\b(?:\s+(CVE-\d{4}-\d{4,})\b)?/gi,
+  )) {
+    const issue = issueId ? `Chromium issue ${issueId}` : undefined;
+    const id = cve?.toUpperCase() ?? issue;
+    if (id) advisories.push({ id, severity: severity.toLowerCase(), issue });
+  }
   return { version, url, advisories };
 }
 
@@ -56,8 +55,11 @@ export function browserReport(pinned: string, releases: Release[]) {
   const advisories = [];
   for (const release of ordered) {
     for (const advisory of release.advisories) {
-      if (seen.has(advisory.id)) continue;
-      seen.add(advisory.id);
+      const { id, issue } = advisory;
+      const repeated = seen.has(id) || (issue !== undefined && seen.has(issue));
+      seen.add(id);
+      if (issue) seen.add(issue);
+      if (repeated) continue;
       if (compareVersions(release.version, pinned) > 0) {
         advisories.push({
           ...advisory,

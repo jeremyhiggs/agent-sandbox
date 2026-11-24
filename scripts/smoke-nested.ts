@@ -25,7 +25,12 @@ const composePort = 18081;
 function sandbox(args: string[], input?: string): string {
   return execFileSync(
     process.execPath,
-    [launcher, args[0], "--name", name, ...args.slice(1)],
+    [
+      launcher,
+      ...(args[0] === "status"
+        ? args
+        : [args[0], "--name", name, ...args.slice(1)]),
+    ],
     { encoding: "utf8", input, stdio: ["pipe", "pipe", "inherit"] },
   ).trim();
 }
@@ -122,7 +127,8 @@ const auth = join(codex, "auth.json");
 const skills = join(home, ".agents", "skills");
 const reference = join(root, "reference");
 const authFixture = '{"smoke":true}\n';
-let created = false;
+let creationAttempted = false;
+let failed = false;
 try {
   for (const dir of [codex, skills, reference])
     mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -141,6 +147,7 @@ try {
     "nested-smoke",
     worktree,
   ]);
+  creationAttempted = true;
   sandbox([
     "run",
     "--image",
@@ -168,7 +175,6 @@ try {
     "--exec",
     "true",
   ]);
-  created = true;
   assert.equal(guest("id", "-u"), "1000");
   assert.equal(guest("git", "rev-parse", "--show-toplevel"), worktree);
   assert.equal(guest("cat", auth), authFixture.trim());
@@ -249,9 +255,19 @@ try {
     sentinel,
   );
   console.log("Rootless Podman image survived the sandbox restart");
+} catch (error) {
+  failed = true;
+  throw error;
 } finally {
   try {
-    if (created) sandbox(["delete"]);
+    if (creationAttempted) {
+      const { data } = JSON.parse(sandbox(["status", "--json"]));
+      if (data.sandboxes.some((guest: { name: string }) => guest.name === name))
+        sandbox(["delete"]);
+    }
+  } catch (error) {
+    if (!failed) throw error;
+    console.error("Could not clean up the smoke guest", error);
   } finally {
     rmSync(root, { recursive: true });
   }

@@ -54,6 +54,30 @@ test("a fix already in the pin is excluded even if a later post repeats the CVE"
   assert.deepEqual(browserReport("100.0.1.8", [newer, pinned]).blocking, []);
 });
 
+test("severity-rated Chromium issues are reported before a CVE is assigned", () => {
+  const original = chromeRelease(
+    `Updated to 100.0.1.8 for Linux. Security Fixes and Rewards
+    [N/A][<a href="https://issues.chromium.org/issues/466192044">466192044</a>] <b>High:</b> A security fix.
+    [$1000][466192045] Low: A second fix.`,
+    advisoryURL,
+  );
+  const updated = chromeRelease(
+    "Updated to 100.0.1.9 for Linux. [N/A][466192044] High CVE-2099-1007",
+    advisoryURL,
+  );
+  assert.ok(original && updated);
+  assert.deepEqual(
+    browserReport("100.0.1.7", [updated, original]).blocking.map(
+      ({ id }) => id,
+    ),
+    ["Chromium issue 466192044"],
+  );
+  assert.deepEqual(
+    browserReport("100.0.1.8", [updated, original]).blocking,
+    [],
+  );
+});
+
 test("Desktop updates for Windows and Mac alone do not apply to the Linux guest", () => {
   assert.equal(
     chromeRelease(

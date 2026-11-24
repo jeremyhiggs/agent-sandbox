@@ -141,7 +141,7 @@ findings. CI preserves reports and SBOMs; see [report locations](verification.md
 
 Hashes establish artifact integrity, not complete vulnerability coverage. Trivy
 coverage of downloaded native binaries and Chrome is limited. The Chrome audit
-checks Google's Linux desktop stable release notes for published CVEs fixed
+checks Google's Linux desktop stable release notes for published security fixes
 after the pinned version. Findings at Medium or higher fail the audit. Unpublished
 or unrated fixes have no severity match.
 
