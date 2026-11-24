@@ -40,6 +40,7 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
 }
 else if (args[0] === 'ls') console.log(JSON.stringify([{configuration:{id:name,labels:{'dev.agent-container.managed':'true'},private:'must not leak'},status:{state:'running'}},{configuration:{id:'legacy',labels:{'dev.codex-sandbox.managed':'true'}},status:{state:'stopped'}},{configuration:{id:'unrelated',labels:{}},status:{state:'running'}},{configuration:{id:'boolean-label',labels:{'dev.agent-container.managed':true}},status:{state:'running'}}]));
 else if (args[0] === 'exec') {
+  if (args[1] === '--user') process.exit(0);
   const at = args.indexOf(name), command = args.slice(at + 1);
   if (command[0] === 'hc') {
     if (command[1] === 'run') console.log(JSON.stringify({address:'t7'}));
@@ -647,6 +648,7 @@ test("repository audit preserves a post-scan metadata command failure", () =>
     mkdirSync(join(root, "scripts"));
     for (const file of [
       "scripts/security.ts",
+      "scripts/browser-audit.ts",
       "scripts/vulnerabilities.ts",
       "scripts/process.ts",
       ".trivyignore.yaml",

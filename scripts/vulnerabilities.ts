@@ -1,6 +1,12 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,24 +28,50 @@ export function checkVulnerabilities(
   stdout: 1 | 2 = 1,
   scanners = "vuln",
 ): void {
-  const exitCode = trivy(
-    [
-      "convert",
-      "--ignorefile",
-      ignorefile,
-      "--show-suppressed",
-      "--scanners",
-      scanners,
-      "--severity",
-      "HIGH,CRITICAL",
-      "--format",
-      "table",
-      "--exit-code",
-      String(POLICY_EXIT_CODE),
-      report,
-    ],
-    stdout,
-  );
+  let temp: string | undefined;
+  let exitCode: number;
+  try {
+    let input = report;
+    if (scanners.split(",").includes("secret")) {
+      const data = JSON.parse(readFileSync(report, "utf8")) as {
+        Results?: { Secrets?: { Severity: string }[] }[];
+      };
+      // Trivy uses the same severity filter for dependencies and secrets. Its
+      // full report retains Medium secrets while the gate keeps their old threshold.
+      for (const result of data.Results ?? []) {
+        if (!result.Secrets?.some(({ Severity }) => Severity === "MEDIUM"))
+          continue;
+        result.Secrets = result.Secrets.filter(
+          ({ Severity }) => Severity !== "MEDIUM",
+        );
+        temp ??= mkdtempSync(join(tmpdir(), "agent-sandbox-policy-"));
+      }
+      if (temp) {
+        input = join(temp, "report.json");
+        writeFileSync(input, JSON.stringify(data), { mode: 0o600 });
+      }
+    }
+    exitCode = trivy(
+      [
+        "convert",
+        "--ignorefile",
+        ignorefile,
+        "--show-suppressed",
+        "--scanners",
+        scanners,
+        "--severity",
+        "MEDIUM,HIGH,CRITICAL",
+        "--format",
+        "table",
+        "--exit-code",
+        String(POLICY_EXIT_CODE),
+        input,
+      ],
+      stdout,
+    );
+  } finally {
+    if (temp) rmSync(temp, { recursive: true, force: true });
+  }
   if (exitCode)
     throw Object.assign(
       new Error(

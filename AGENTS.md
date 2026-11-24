@@ -10,11 +10,12 @@ This file defines repository verification requirements.
    install is missing or dependencies changed. Do not refresh locks during normal
    verification.
 3. Run `mise run check` against the final changes. It includes formatting, lint,
-   TypeScript, unit tests, lock consistency, and the live Chrome freshness audit.
-   Browser freshness requires network access; a network failure is not a pass.
-   Biome must cover JavaScript/TypeScript and Markdown throughout the repo. Shell
-   scripts must pass shfmt and ShellCheck through the same normal validation;
-   Biome's unsupported-language warning is not a shell check.
+   TypeScript, unit tests, lock consistency, and the live Chrome security audit.
+   The browser audit checks published Linux stable fixes at Medium or higher.
+   Browser auditing requires network access; a network failure is not a pass.
+   Biome covers JavaScript, TypeScript, Markdown, YAML, and JSON. Taplo checks
+   TOML, shfmt and ShellCheck check shell scripts, and actionlint checks GitHub
+   Actions workflows. Generated dependency locks use their native verification.
 4. Run `git diff --check` and `git diff --cached --check`.
 5. Review staged changes for secrets, credentials, and unintended personal data.
    Run configured security hooks and available secret scanners. Stop on findings;
@@ -92,13 +93,15 @@ disable vulnerability scanning to work around contention.
   disabled. Preserve project-scoped `[tool_config] locked = true`; do not impose
   locked mode on the developer's unrelated global tools.
 - When changing Chrome, refresh its version and both architecture hashes, then
-  run `audit:browser` and the image browser checks. The freshness audit is separate
+  run `audit:browser` and the image browser checks. The browser audit is separate
   from Trivy's vulnerability coverage.
-- HIGH/CRITICAL findings block publication even without a fix, except for
-  explicitly approved exceptions. Scope exceptions by advisory, package/version,
-  and path, document the reason, set an expiry, and retain suppressed findings in
-  reports. Do not enable a blanket `--ignore-unfixed` policy. Remove an exception
-  once a fixed distribution is available; do not extend its expiry silently.
+- Dependency vulnerabilities rated Moderate or Medium and above block publication
+  even without a fix, except for explicitly approved exceptions. High and
+  Critical secret findings also block publication. Scope exceptions by advisory,
+  package/version, and path, document the reason, set an expiry, and retain
+  suppressed findings in reports. Do not enable a blanket `--ignore-unfixed`
+  policy. Remove an exception once a fixed distribution is available and
+  retain its approved expiry until removal.
 - See `docs/reproducibility.md` for lock refresh commands and
   `docs/verification.md` for coverage and limitations. Never equate integrity
   verification with a complete vulnerability audit of native binaries.

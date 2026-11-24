@@ -21,6 +21,11 @@ contents:
     - tini
     - unzip
     - xz
+    - podman=6.0.0-r4
+    - just-newuidmap-newgidmap
+    - libarchive-tools
+    - python-3.14
+    - py3.14-pyyaml
     - alsa-lib
     - at-spi2-core
     - cairo

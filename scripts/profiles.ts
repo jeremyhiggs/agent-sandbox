@@ -23,7 +23,7 @@ for (const profile of PROFILES) {
       "--dir",
       join(ROOT, "image", "tools", profile),
       ...(command === "audit"
-        ? ["audit", "--audit-level=high"]
+        ? ["audit", "--audit-level=moderate"]
         : [
             "install",
             "--lockfile-only",

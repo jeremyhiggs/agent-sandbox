@@ -9,7 +9,7 @@ Git worktree, reuse a file-backed Codex login without another sign-in, and open
 the agent in its own Herdr space. Each sandbox keeps its tools and session state
 until you delete it.
 
-Version **0.1.0**. See the [changelog](CHANGELOG.md).
+Version **0.2.0**. See the [changelog](CHANGELOG.md).
 
 ## Install
 
@@ -59,8 +59,10 @@ agent-sandbox run --name scratch --agent codex
 Use `--agent claude` or `--agent opencode` for the other agent images, or omit
 `--agent` for Bash. Claude and OpenCode require login inside the sandbox.
 All four images include mise, Node, pnpm, Git, Git LFS, GitHub CLI, hc,
-agent-browser and Chrome. Install project-specific dependencies inside the guest;
-see [images and tools](docs/usage.md#images).
+agent-browser, Chrome, Podman and Podman Compose. New sandboxes can
+[run rootless containers inside the guest](docs/usage.md#nested-containers).
+Install project-specific dependencies inside the guest. See
+[images and tools](docs/usage.md#images).
 
 The default allocation is **4 CPUs and 4 GB RAM**. Set `--cpus` and `--memory`
 when creating a sandbox; mounts and resources cannot be changed afterward.

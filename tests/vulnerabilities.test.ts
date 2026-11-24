@@ -36,8 +36,8 @@ function report(severities: string[], check: (path: string) => void) {
   }
 }
 
-test("repository and image gate rejects either HIGH or CRITICAL with no available fix", () => {
-  for (const severity of ["HIGH", "CRITICAL"])
+test("the repository and image gate rejects Medium or higher dependencies without a fix", () => {
+  for (const severity of ["MEDIUM", "HIGH", "CRITICAL"])
     report([severity], (path) =>
       assert.throws(
         () => checkVulnerabilities(path),
@@ -65,7 +65,7 @@ test("invalid scanner reports fail as execution errors rather than clean scans",
 });
 
 test("repository and image gate retains lower severity reports without blocking", () => {
-  report(["LOW", "MEDIUM", "UNKNOWN"], (path) =>
+  report(["LOW", "UNKNOWN"], (path) =>
     assert.doesNotThrow(() => checkVulnerabilities(path)),
   );
 });
@@ -120,5 +120,25 @@ test("native image gate blocks HIGH secrets as well as package findings", () => 
       () => checkVulnerabilities(path, 1, "vuln,secret"),
       /policy findings/,
     );
+  });
+});
+
+test("a Medium secret alone stays report-only under the dependency policy", () => {
+  report([], (path) => {
+    const data = JSON.parse(readFileSync(path, "utf8"));
+    data.Results[0].Secrets = [
+      {
+        RuleID: "fixture",
+        Category: "fixture",
+        Severity: "MEDIUM",
+        Title: "Fixture secret",
+        StartLine: 1,
+        EndLine: 1,
+      },
+    ];
+    const original = JSON.stringify(data);
+    writeFileSync(path, original);
+    assert.doesNotThrow(() => checkVulnerabilities(path, 1, "vuln,secret"));
+    assert.equal(readFileSync(path, "utf8"), original);
   });
 });

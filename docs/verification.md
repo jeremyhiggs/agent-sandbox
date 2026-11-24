@@ -23,20 +23,33 @@ mise run audit
 ```
 
 `check` covers formatting, lint, TypeScript, unit tests, lock consistency and the
-live Chrome stable-version audit. Browser freshness requires network access;
-a network failure is not a pass. `audit` checks root and profile pnpm graphs,
-repository Trivy findings and browser freshness.
+live Chrome advisory audit. Chrome fails on published Medium or higher fixes
+in a newer Linux stable release. The audit requires network access. `audit`
+checks root and profile pnpm graphs, mise tools against OSV, repository Trivy
+findings and Chrome advisories.
 
-Biome covers JavaScript/TypeScript, Markdown, JSON and YAML. shfmt and ShellCheck
-cover shell scripts through the normal `lint` and `check` tasks. Use
-`mise run fmt` to apply formatting and `mise tasks` to list tasks.
+Use `mise run fmt` to apply formatting and `mise run lint` to check it and run
+the linters. CI runs these checks through `mise run check`.
 
-Biome rejects unused imports and variables, redundant catch-and-rethrow blocks,
-and direct self-comparisons. Test files also fail lint on focused and skipped
-test declarations. These checks run through the same `mise run check` in local
-development and CI. They do not detect duplicate scenarios, self-comparisons
-inside assertion calls, or mocks that manufacture the result under test; review
-those cases against the observable behavior and independent expected values.
+| Files                                            | Formatter | Linter               |
+| ------------------------------------------------ | --------- | -------------------- |
+| JavaScript, TypeScript, Markdown, JSON, and YAML | Biome     | Biome                |
+| GitHub Actions workflows                         | Biome     | Biome and actionlint |
+| TOML                                             | Taplo     | Taplo                |
+| Shell scripts                                    | shfmt     | ShellCheck           |
+
+pnpm owns the formatting of its generated YAML lockfiles. `lock:check` validates
+the root and all four image profile locks with frozen pnpm installs. Biome lints
+the Aube YAML lock, and `lock:check` verifies its pinned content hash.
+
+Biome sorts JSON and JSONC object keys and follows package manifest conventions
+for `package.json`. It rejects unused imports and variables, redundant
+catch-and-rethrow blocks, direct self-comparisons, and duplicate keys in JSON
+and YAML. Test files also fail lint on
+focused and skipped test declarations. These checks do not detect duplicate
+scenarios, self-comparisons inside assertion calls, or mocks that manufacture the
+result under test; review those cases against the observable behavior and
+independent expected values.
 
 Documentation-only changes need source checks and privacy review when they do
 not affect runtime behavior, build inputs, configuration or dependencies.
@@ -77,6 +90,13 @@ pkg-config. They open a Chrome page through agent-browser, verify its title and
 close the browser. See [reproducibility](reproducibility.md) for locks and hashes.
 
 ## Lifecycle, mounts, and terminals
+
+After building the base image, `mise run smoke:nested` verifies a rootless
+Podman build, a standalone container and a two-service Compose stack in a
+disposable Apple guest. It builds from a shared linked worktree and tests inner
+read/write and read-only bind mounts alongside synthetic Codex auth and skills
+mounts. It also tests HTTP from the guest and macOS loopback, DNS between Compose
+services, and that an image can run again after a guest restart.
 
 Launcher checks need Apple Container running and the images in its image store.
 Run `mise run build` if they are missing. Docker image checks use a separate
@@ -167,15 +187,17 @@ Keep reports under ignored `.artifacts/`:
   database metadata observed after each successful scan, including scans whose
   findings fail policy. This is a post-scan cache observation: another process
   can refresh the shared database between the scan and the metadata read.
-- `browser-release.json`
+- `browser-release.json` for the Chrome pin, the latest Linux stable release
+  in the vendor feed, and published severity-rated fixes newer than the pin.
 - `apko/sbom/` for native SPDX SBOMs.
 
-HIGH/CRITICAL findings block publication, including unfixed findings, except for
-explicit approved exceptions. Reports retain lower severities and suppressed
-findings. See the [exception scope and expiry](reproducibility.md#vulnerability-checks).
+Dependency vulnerabilities rated Moderate or Medium and above block publication,
+including unfixed findings. High and Critical secret findings also block
+publication. Reports retain lower severities and suppressed findings.
+See the [exception scope and expiry](reproducibility.md#vulnerability-checks).
 
 Trivy writes the complete JSON report, then `trivy convert` renders a native
-table and enforces HIGH/CRITICAL policy from that same scan. Image scans include
+table and enforces the severity thresholds using that same scan. Image scans include
 vulnerabilities and secrets. Exit 42 means policy findings; execution errors keep
 their exit status, including 126/127 for unavailable tools. An error, exclusion or
 unrun check is not a clean scan. The CLI's `--json` envelope remains separate from
@@ -200,12 +222,17 @@ retain the scanner, database, platform and image identity when quoting results.
 
 Trivy covers recognized Wolfi and discoverable Node inventories. Coverage of
 downloaded native binaries and Chrome is limited. A verified checksum is not a
-complete vulnerability audit; browser provenance and freshness complement scans.
+complete vulnerability audit. `mise run audit:host-tools` queries OSV for the
+repository's mise pins and the running mise version. Use mise 2026.11.12 or
+newer for this task. Medium and higher findings fail. The report in
+`.artifacts/mise-audit.json` retains lower and unrated findings and lists tools
+mise could not look up. The Chrome advisory audit checks Google's Linux stable
+releases separately.
 Use an isolated Trivy cache if another scan holds its lock; do not disable scans.
 
 ## CI coverage
 
-CI configures source and context checks, separate pnpm/repository/browser audits,
+CI configures source and context checks, separate pnpm, OSV, Trivy and Chrome audits,
 and four-profile Docker builds, runtime checks and Trivy scans on native Linux
 amd64 and arm64 runners. It uploads vulnerability reports and OS SBOMs.
 Runtime checks and scans require a successful build. A runtime-check failure
@@ -214,3 +241,17 @@ still allows scanning that built image, while keeping the job failed.
 Triggers are push, pull request, manual dispatch and daily at **00:00 UTC**
 (`0 0 * * *`). Read the job results for a particular commit; configured coverage
 does not prove that a run passed. There are no automated dependency-update PRs.
+
+## Releases
+
+To request a release, increase the stable version in `package.json` and add a
+matching `## VERSION` section with notes in `CHANGELOG.md`. The release job runs
+only when a push to `main` raises the version compared with the beginning of that
+push and all source, audit, and image jobs pass. It tags the tested commit and
+uses the matching changelog section as the GitHub release notes.
+
+Keep release immutability enabled under **Settings → General → Releases**.
+The publish job verifies that GitHub marked the release immutable. A rerun can
+finish publication if the tag already points to the tested commit. Rerun the
+version-bump workflow after a transient failure. If a source fix needs a new
+commit, include a new version bump and changelog entry in that push.

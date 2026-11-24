@@ -1,18 +1,39 @@
 {
-  "pnpm": {
-    "version": "11.28.12",
-    "url": "https://registry.npmjs.org/pnpm/-/pnpm-11.28.12.tgz",
-    "sha256": "d0c42f9232c9685056b432f8b07631bbabd245d40ede9a982919c7a7ada40aa7"
-  },
   "hc": {
-    "version": "0.1.20",
-    "arm64": {
-      "url": "https://releases.herdr.dev/core/0.1.20/herdr-core-linux-aarch64.tar.gz",
-      "sha256": "5f3037379d15cc76cfc72d2fd1a4262ea1c5b24df278bf7cfd8adcff7b914862"
-    },
     "amd64": {
-      "url": "https://releases.herdr.dev/core/0.1.20/herdr-core-linux-x86_64.tar.gz",
-      "sha256": "ac6b86890c451a37584620aaa438b71bc0d0bd430a2e7c1d7e095f052c414e74"
-    }
+      "sha256": "ac6b86890c451a37584620aaa438b71bc0d0bd430a2e7c1d7e095f052c414e74",
+      "url": "https://releases.herdr.dev/core/0.1.20/herdr-core-linux-x86_64.tar.gz"
+    },
+    "arm64": {
+      "sha256": "5f3037379d15cc76cfc72d2fd1a4262ea1c5b24df278bf7cfd8adcff7b914862",
+      "url": "https://releases.herdr.dev/core/0.1.20/herdr-core-linux-aarch64.tar.gz"
+    },
+    "version": "0.1.20"
+  },
+  "passt": {
+    "amd64": {
+      "sha256": "f3636cb53c0d7fb8c7306be51d0802f9d011c9dd28abc26656c0c33e4db48c05",
+      "url": "https://deb.debian.org/debian/pool/main/p/passt/passt_0.0~git20261002.cba3570-1_amd64.deb"
+    },
+    "arm64": {
+      "sha256": "44332f455df5591be3642a7290ced33c9389fbf8c63393b2a5fbe59f8e6cc196",
+      "url": "https://deb.debian.org/debian/pool/main/p/passt/passt_0.0~git20261002.cba3570-1_arm64.deb"
+    },
+    "version": "0.0~git20261002.cba3570-1"
+  },
+  "pnpm": {
+    "sha256": "d0c42f9232c9685056b432f8b07631bbabd245d40ede9a982919c7a7ada40aa7",
+    "url": "https://registry.npmjs.org/pnpm/-/pnpm-11.28.12.tgz",
+    "version": "11.28.12"
+  },
+  "podman-compose": {
+    "sha256": "98e48af25d44c10ecef948163bfcca002e32aa8bbb7e66593fbd4faff7270c30",
+    "url": "https://files.pythonhosted.org/packages/93/31/b38c2656bad6265168902793c60145b172788a79e4b15de212af9bd78728/podman_compose-1.6.0-py3-none-any.whl",
+    "version": "1.6.0"
+  },
+  "python-dotenv": {
+    "sha256": "42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc",
+    "url": "https://files.pythonhosted.org/packages/60/d1/38f3a3405989a89ac18390803e70c6ad7c7760da4f9b83cbeca0c44a0c72/python_dotenv-1.2.4-py3-none-any.whl",
+    "version": "1.2.4"
   }
 }

@@ -25,9 +25,9 @@ package_manager = "aube"
 IMAGE_MISE_VERSION = "2026.11.7"
 IMAGE_NODE_VERSION = "24.22.3"
 IMAGE_PNPM_VERSION = "11.28.12"
-IMAGE_BROWSER_VERSION = "158.0.8127.36"
-IMAGE_BROWSER_SHA256_ARM64 = "f811b64a50cbc73f94fda7b3f3b3bf62be5d9409b3207e6ead9b61e6706afffe"
-IMAGE_BROWSER_SHA256_AMD64 = "dba9cc838e1ce269c33ea68170881127bd15d078fc3ca5891c90802819a4d7c7"
+IMAGE_BROWSER_VERSION = "158.0.8127.88"
+IMAGE_BROWSER_SHA256_ARM64 = "91669b5de79af808d498037dd974e4b09461776a1b5240b3bb656abd17e5d3ab"
+IMAGE_BROWSER_SHA256_AMD64 = "59e3b43f8b3aaa292238fbdcfb36a93127debd53e212510dcdc2cc8812b4b57e"
 IMAGE_MISE_BASE = "ghcr.io/jdx/mise:2026.11.7@sha256:36a8408d3398aff30a761b4ae57f71f50942d64f4e7ecd5353ffaee7ec4fa63a"
 IMAGE_CODEX_VERSION = "0.167.1"
 IMAGE_OPENCODE_VERSION = "2.2.7"
@@ -50,6 +50,7 @@ run = [
   "biome check .",
   "tsc --noEmit",
   "taplo fmt --check",
+  "taplo lint --no-schema",
   "hadolint Dockerfile",
   "actionlint",
   "node scripts/check-shell.ts",
@@ -66,7 +67,7 @@ description = "Build all four images with a shared browser base"
 run = "node scripts/profiles.ts build"
 
 [tasks.scan]
-description = "Scan all Apple images for vulnerabilities and secrets; gate HIGH/CRITICAL"
+description = "Scan all Apple images for vulnerabilities and secrets"
 run = "node scripts/profiles.ts scan"
 
 [tasks."scan:json"]
@@ -76,6 +77,10 @@ run = "node scripts/sandbox.ts scan --engine container --profile base --json"
 [tasks.smoke]
 description = "Exercise persistent lifecycle, terminals, opt-in mounts, and isolated host hc"
 run = "node scripts/smoke.ts"
+
+[tasks."smoke:nested"]
+description = "Build and run rootless Podman and Compose fixtures, including host port forwarding"
+run = "node scripts/smoke-nested.ts"
 
 [tasks.setup]
 description = "Install the locked Node type definitions"
@@ -154,19 +159,30 @@ description = "Test tools, browsers and agent separation in all images using Doc
 run = "node scripts/profiles.ts check docker"
 
 [tasks.audit]
-description = "Audit repository/image Node packages, repository dependencies, and browser freshness"
-depends = ["audit:node", "audit:tools", "audit:repo", "audit:browser"]
+description = "Audit Node packages, pinned tools, repository dependencies, and browser security"
+depends = [
+  "audit:node",
+  "audit:tools",
+  "audit:host-tools",
+  "audit:repo",
+  "audit:browser",
+]
 
 [tasks."audit:node"]
-run = "pnpm audit --audit-level=high"
+run = "pnpm audit --audit-level=moderate"
 
 [tasks."audit:tools"]
 run = "node scripts/profiles.ts audit"
+
+[tasks."audit:host-tools"]
+description = "Check pinned mise tools against OSV for Medium or higher vulnerabilities"
+run = "node scripts/mise-audit.ts"
 
 [tasks."audit:repo"]
 run = "node scripts/security.ts repo"
 
 [tasks."audit:browser"]
+description = "Check the pinned Chrome version against published Medium or higher Linux stable fixes"
 run = "node scripts/security.ts browser"
 
 [tasks."lock:update"]
@@ -174,12 +190,20 @@ description = "Generate the native apko lockfile for both architectures"
 run = [
   "apko lock image/apko.yaml --output image/apko.lock.json",
   "chmod 644 image/apko.lock.json",
+  "biome check --write image/apko.lock.json",
 ]
 
 [tasks."lock:tools"]
 description = "Refresh CLI archive checksums and the image's pnpm dependency lock"
-run = "node scripts/lock-tools.ts"
+run = [
+  "node scripts/lock-tools.ts",
+  "biome check --write image/artifacts.json image/tools/*/package.json",
+]
 
 [tasks."lock:check"]
 description = "Validate package locks, base digests, and CLI version pins"
-run = ["node scripts/check-locks.ts", "node scripts/profiles.ts locks"]
+run = [
+  "node scripts/check-locks.ts",
+  "pnpm install --lockfile-only --frozen-lockfile --ignore-scripts",
+  "node scripts/profiles.ts locks",
+]
