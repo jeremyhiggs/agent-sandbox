@@ -241,3 +241,17 @@ still allows scanning that built image, while keeping the job failed.
 Triggers are push, pull request, manual dispatch and daily at **00:00 UTC**
 (`0 0 * * *`). Read the job results for a particular commit; configured coverage
 does not prove that a run passed. There are no automated dependency-update PRs.
+
+## Releases
+
+To request a release, increase the stable version in `package.json` and add a
+matching `## VERSION` section with notes in `CHANGELOG.md`. The release job runs
+only when a push to `main` raises the version compared with the beginning of that
+push and all source, audit, and image jobs pass. It tags the tested commit and
+uses the matching changelog section as the GitHub release notes.
+
+Keep release immutability enabled under **Settings → General → Releases**.
+The publish job verifies that GitHub marked the release immutable. A rerun can
+finish publication if the tag already points to the tested commit. Rerun the
+version-bump workflow after a transient failure. If a source fix needs a new
+commit, include a new version bump and changelog entry in that push.
