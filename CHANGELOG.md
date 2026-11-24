@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.0
+
+- New sandboxes run as UID 1000 with rootless Podman and Podman Compose.
+  Host mounts remain opt-in. Use `--publish HOST_PORT:GUEST_PORT` to reach
+  guest services from Mac loopback. Rebuild older images for nested container
+  support or launch them with `--no-nested-containers`.
+  See the [nested container guide](docs/usage.md#nested-containers).
+- Updated Chrome to `158.0.8127.88` to fix CVE-2026-134401 and refreshed the
+  Linux arm64 and amd64 archive hashes.
+- Dependency audits now flag Medium or higher vulnerabilities. CI uses
+  checksum-pinned mise `2026.11.12` to check locked tools against OSV. The
+  Chrome audit checks published Linux security fixes.
+
 ## 0.1.0
 
 Initial version of `agent-sandbox` for Apple silicon Macs using Apple's container runtime.

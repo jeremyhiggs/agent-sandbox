@@ -9,7 +9,7 @@ Git worktree, reuse a file-backed Codex login without another sign-in, and open
 the agent in its own Herdr space. Each sandbox keeps its tools and session state
 until you delete it.
 
-Version **0.1.0**. See the [changelog](CHANGELOG.md).
+Version **0.2.0**. See the [changelog](CHANGELOG.md).
 
 ## Install
 
