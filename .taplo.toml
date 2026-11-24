@@ -1,1 +1,6 @@
-exclude = [".artifacts/**"]
+exclude = [
+  ".artifacts/**",
+  ".pnpm-store/**",
+  "**/node_modules/**",
+  "mise.local.toml",
+]

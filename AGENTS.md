@@ -13,9 +13,9 @@ This file defines repository verification requirements.
    TypeScript, unit tests, lock consistency, and the live Chrome security audit.
    The browser audit checks published Linux stable fixes at Medium or higher.
    Browser auditing requires network access; a network failure is not a pass.
-   Biome must cover JavaScript/TypeScript and Markdown throughout the repo. Shell
-   scripts must pass shfmt and ShellCheck through the same normal validation;
-   Biome's unsupported-language warning is not a shell check.
+   Biome covers JavaScript, TypeScript, Markdown, YAML, and JSON. Taplo checks
+   TOML, shfmt and ShellCheck check shell scripts, and actionlint checks GitHub
+   Actions workflows. Generated dependency locks use their native verification.
 4. Run `git diff --check` and `git diff --cached --check`.
 5. Review staged changes for secrets, credentials, and unintended personal data.
    Run configured security hooks and available secret scanners. Stop on findings;

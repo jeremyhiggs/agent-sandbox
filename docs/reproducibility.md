@@ -74,6 +74,7 @@ sidecars, then review their diff:
 ```sh
 mise lock --upgrade --platform linux-x64,linux-arm64,macos-arm64
 mise install --locked
+mise run fmt
 mise run lock:check
 ```
 

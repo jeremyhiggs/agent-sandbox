@@ -28,16 +28,28 @@ in a newer Linux stable release. The audit requires network access. `audit`
 checks root and profile pnpm graphs, mise tools against OSV, repository Trivy
 findings and Chrome advisories.
 
-Biome covers JavaScript/TypeScript, Markdown, JSON and YAML. shfmt and ShellCheck
-cover shell scripts through the normal `lint` and `check` tasks. Use
-`mise run fmt` to apply formatting and `mise tasks` to list tasks.
+Use `mise run fmt` to apply formatting and `mise run lint` to check it and run
+the linters. CI runs these checks through `mise run check`.
 
-Biome rejects unused imports and variables, redundant catch-and-rethrow blocks,
-and direct self-comparisons. Test files also fail lint on focused and skipped
-test declarations. These checks run through the same `mise run check` in local
-development and CI. They do not detect duplicate scenarios, self-comparisons
-inside assertion calls, or mocks that manufacture the result under test; review
-those cases against the observable behavior and independent expected values.
+| Files                                            | Formatter | Linter               |
+| ------------------------------------------------ | --------- | -------------------- |
+| JavaScript, TypeScript, Markdown, JSON, and YAML | Biome     | Biome                |
+| GitHub Actions workflows                         | Biome     | Biome and actionlint |
+| TOML                                             | Taplo     | Taplo                |
+| Shell scripts                                    | shfmt     | ShellCheck           |
+
+pnpm owns the formatting of its generated YAML lockfiles. `lock:check` validates
+the root and all four image profile locks with frozen pnpm installs. Biome lints
+the Aube YAML lock, and `lock:check` verifies its pinned content hash.
+
+Biome sorts JSON and JSONC object keys and follows package manifest conventions
+for `package.json`. It rejects unused imports and variables, redundant
+catch-and-rethrow blocks, direct self-comparisons, and duplicate keys in JSON
+and YAML. Test files also fail lint on
+focused and skipped test declarations. These checks do not detect duplicate
+scenarios, self-comparisons inside assertion calls, or mocks that manufacture the
+result under test; review those cases against the observable behavior and
+independent expected values.
 
 Documentation-only changes need source checks and privacy review when they do
 not affect runtime behavior, build inputs, configuration or dependencies.

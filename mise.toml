@@ -50,6 +50,7 @@ run = [
   "biome check .",
   "tsc --noEmit",
   "taplo fmt --check",
+  "taplo lint --no-schema",
   "hadolint Dockerfile",
   "actionlint",
   "node scripts/check-shell.ts",
@@ -189,12 +190,20 @@ description = "Generate the native apko lockfile for both architectures"
 run = [
   "apko lock image/apko.yaml --output image/apko.lock.json",
   "chmod 644 image/apko.lock.json",
+  "biome check --write image/apko.lock.json",
 ]
 
 [tasks."lock:tools"]
 description = "Refresh CLI archive checksums and the image's pnpm dependency lock"
-run = "node scripts/lock-tools.ts"
+run = [
+  "node scripts/lock-tools.ts",
+  "biome check --write image/artifacts.json image/tools/*/package.json",
+]
 
 [tasks."lock:check"]
 description = "Validate package locks, base digests, and CLI version pins"
-run = ["node scripts/check-locks.ts", "node scripts/profiles.ts locks"]
+run = [
+  "node scripts/check-locks.ts",
+  "pnpm install --lockfile-only --frozen-lockfile --ignore-scripts",
+  "node scripts/profiles.ts locks",
+]

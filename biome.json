@@ -1,5 +1,6 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.6.7/schema.json",
+  "assist": { "actions": { "source": { "organizeImports": "on" } } },
   "files": {
     "includes": [
       "**/*.js",
@@ -8,31 +9,30 @@
       "**/*.cjs",
       "**/*.ts",
       "**/*.tsx",
+      "**/*.mts",
+      "**/*.cts",
       "**/*.json",
       "**/*.jsonc",
       "**/*.md",
+      "**/*.markdown",
       "**/*.yml",
-      "**/*.yaml",
-      "!.mise/**",
-      "!**/pnpm-lock.yaml"
+      "**/*.yaml"
     ]
   },
-  "vcs": { "enabled": true, "clientKind": "git", "useIgnoreFile": true },
   "formatter": { "indentStyle": "space" },
-  "markdown": { "parser": { "frontmatter": true } },
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "none",
+      "complexity": { "noUselessCatch": "error" },
       "correctness": {
         "noUnusedImports": "error",
         "noUnusedVariables": "error"
       },
-      "complexity": { "noUselessCatch": "error" },
+      "preset": "none",
       "suspicious": { "noSelfCompare": "error" }
     }
   },
-  "assist": { "actions": { "source": { "organizeImports": "on" } } },
+  "markdown": { "parser": { "frontmatter": true } },
   "overrides": [
     {
       "includes": ["tests/**/*.ts"],
@@ -46,7 +46,7 @@
       }
     },
     {
-      "includes": ["**/*.md"],
+      "includes": ["**/*.md", "**/*.markdown"],
       "linter": {
         "rules": {
           "nursery": {
@@ -57,6 +57,32 @@
           }
         }
       }
+    },
+    {
+      "includes": ["**/*.yml", "**/*.yaml"],
+      "linter": {
+        "rules": { "nursery": { "noDuplicateMapKeys": "error" } }
+      }
+    },
+    {
+      "assist": { "actions": { "source": { "useSortedKeys": "on" } } },
+      "includes": ["**/*.json", "**/*.jsonc"],
+      "linter": {
+        "rules": { "suspicious": { "noDuplicateObjectKeys": "error" } }
+      }
+    },
+    {
+      "assist": {
+        "actions": {
+          "source": { "useSortedKeys": "off", "useSortedPackageJson": "on" }
+        }
+      },
+      "includes": ["**/package.json"]
+    },
+    {
+      "formatter": { "enabled": false },
+      "includes": [".mise/locks/**/aube-lock.yaml"]
     }
-  ]
+  ],
+  "vcs": { "clientKind": "git", "enabled": true, "useIgnoreFile": true }
 }
