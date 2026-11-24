@@ -21,7 +21,7 @@ jobs:
         run: bash scripts/ci-setup.sh
       - name: Install locked development dependencies
         run: mise run setup
-      - name: Check source, locks, and browser freshness
+      - name: Check source, locks, and browser advisories
         run: mise run check
       - name: Verify Docker build context
         run: mise run smoke:context:ci
@@ -30,7 +30,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        check: [node, tools, repo, browser]
+        check: [node, tools, host-tools, repo, browser]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:

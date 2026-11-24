@@ -102,11 +102,13 @@ mise run lock:tools
 mise run lock:check
 ```
 
-`lock:tools` refreshes archive metadata and the four pnpm graphs, checking hc
-archives against the vendor manifest. For Chrome, update its version and both
-architecture hashes in `mise.toml`, then run `mise run audit:browser`.
-The freshness check compares the pin with Google's stable release; it does not
-update it. Verify archives before extraction or execution.
+`lock:tools` refreshes pnpm and hc archive metadata and the four pnpm graphs,
+checking hc archives against the vendor manifest. Update the pasta and Compose
+wheel pins in `image/artifacts.json` when refreshing those dependencies. For
+Chrome, update its version and both architecture hashes in `mise.toml`, then
+run `mise run audit:browser` and the image browser checks.
+The audit reports Google's published Linux stable security fixes. A newer release
+alone does not require a pin update. Verify archives before extraction or execution.
 
 After any refresh, review the changed pins and run the applicable
 [source, audit, image and launcher checks](verification.md#checks). Commit all
@@ -115,13 +117,15 @@ as the complete pre-push validation.
 
 ## Vulnerability checks
 
-`mise run audit` checks the root and image-tool pnpm graphs, scans the repository
-with Trivy and checks Chrome freshness. `mise run scan` scans all built profiles.
+`mise run audit` checks the root and image-tool pnpm graphs and the pinned mise
+tools against OSV, scans the repository with Trivy and checks Chrome advisories.
+`mise run scan` scans all built profiles.
 Build first. See [image check commands](verification.md#image-checks) for Docker
 and Apple Container variants.
 
-HIGH/CRITICAL findings fail even without a fix, except for explicit, expiring
-entries in `.trivyignore.yaml`. The approved exception is:
+Dependency vulnerabilities at Moderate or Medium and above fail even without a
+fix. Image scans also block High and Critical secret findings. The approved
+Trivy exception in `.trivyignore.yaml` is:
 
 | Field    | Scope                                                                                      |
 | -------- | ------------------------------------------------------------------------------------------ |
@@ -136,8 +140,10 @@ all unfixed findings. Complete reports retain suppressed and lower-severity
 findings. CI preserves reports and SBOMs; see [report locations](verification.md#reports-and-scan-coverage).
 
 Hashes establish artifact integrity, not complete vulnerability coverage. Trivy
-coverage of downloaded native binaries and Chrome is limited; browser freshness
-and pinned provenance complement the scans.
+coverage of downloaded native binaries and Chrome is limited. The Chrome audit
+checks Google's Linux desktop stable release notes for published CVEs fixed
+after the pinned version. Findings at Medium or higher fail the audit. Unpublished
+or unrated fixes have no severity match.
 
 ## Limits
 

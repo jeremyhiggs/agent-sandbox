@@ -66,7 +66,7 @@ description = "Build all four images with a shared browser base"
 run = "node scripts/profiles.ts build"
 
 [tasks.scan]
-description = "Scan all Apple images for vulnerabilities and secrets; gate HIGH/CRITICAL"
+description = "Scan all Apple images for vulnerabilities and secrets"
 run = "node scripts/profiles.ts scan"
 
 [tasks."scan:json"]
@@ -158,19 +158,30 @@ description = "Test tools, browsers and agent separation in all images using Doc
 run = "node scripts/profiles.ts check docker"
 
 [tasks.audit]
-description = "Audit repository/image Node packages, repository dependencies, and browser freshness"
-depends = ["audit:node", "audit:tools", "audit:repo", "audit:browser"]
+description = "Audit Node packages, pinned tools, repository dependencies, and browser security"
+depends = [
+  "audit:node",
+  "audit:tools",
+  "audit:host-tools",
+  "audit:repo",
+  "audit:browser",
+]
 
 [tasks."audit:node"]
-run = "pnpm audit --audit-level=high"
+run = "pnpm audit --audit-level=moderate"
 
 [tasks."audit:tools"]
 run = "node scripts/profiles.ts audit"
+
+[tasks."audit:host-tools"]
+description = "Check pinned mise tools against OSV for Medium or higher vulnerabilities"
+run = "node scripts/mise-audit.ts"
 
 [tasks."audit:repo"]
 run = "node scripts/security.ts repo"
 
 [tasks."audit:browser"]
+description = "Check the pinned Chrome version against published Medium or higher Linux stable fixes"
 run = "node scripts/security.ts browser"
 
 [tasks."lock:update"]

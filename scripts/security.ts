@@ -1,5 +1,6 @@
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { auditBrowser } from "./browser-audit.ts";
 import { scanWithTrivy } from "./vulnerabilities.ts";
 
 const root = join(import.meta.dirname, "..");
@@ -26,23 +27,21 @@ if (command === "repo") {
     process.exitCode = (error as { exitCode?: number }).exitCode ?? 1;
   }
 } else if (command === "browser") {
-  const response = await fetch(
-    "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
-  );
-  if (!response.ok)
-    throw new Error(`Browser release metadata HTTP ${response.status}`);
-  const metadata = (await response.json()) as {
-    channels: { Stable: { version: string } };
-  };
-  const stable = metadata.channels.Stable.version;
-  const pinned = process.env.IMAGE_BROWSER_VERSION;
+  const report = await auditBrowser(process.env.IMAGE_BROWSER_VERSION ?? "");
   writeFileSync(
     join(artifacts, "browser-release.json"),
-    JSON.stringify({ pinned, stable }, null, 2),
+    JSON.stringify(report, null, 2),
   );
-  if (pinned !== stable)
-    throw new Error(
-      `Browser pin ${pinned} differs from vendor stable ${stable}; update mise.toml and the browser checksums`,
+  if (report.blocking.length) {
+    console.error(
+      `Chrome ${report.pinned} has published Medium or higher security fixes:`,
     );
-  console.log(`Browser pin matches vendor stable: ${stable}`);
+    for (const { id, severity, fixedIn, url } of report.blocking)
+      console.error(`  ${id} (${severity}), fixed in Linux ${fixedIn}: ${url}`);
+    process.exitCode = 1;
+  } else {
+    console.log(
+      `Chrome ${report.pinned}: no published Medium or higher fixes in newer Linux stable releases`,
+    );
+  }
 } else throw new Error("Use repo or browser");

@@ -23,9 +23,10 @@ mise run audit
 ```
 
 `check` covers formatting, lint, TypeScript, unit tests, lock consistency and the
-live Chrome stable-version audit. Browser freshness requires network access;
-a network failure is not a pass. `audit` checks root and profile pnpm graphs,
-repository Trivy findings and browser freshness.
+live Chrome advisory audit. Chrome fails on published Medium or higher fixes
+in a newer Linux stable release. The audit requires network access. `audit`
+checks root and profile pnpm graphs, mise tools against OSV, repository Trivy
+findings and Chrome advisories.
 
 Biome covers JavaScript/TypeScript, Markdown, JSON and YAML. shfmt and ShellCheck
 cover shell scripts through the normal `lint` and `check` tasks. Use
@@ -174,15 +175,17 @@ Keep reports under ignored `.artifacts/`:
   database metadata observed after each successful scan, including scans whose
   findings fail policy. This is a post-scan cache observation: another process
   can refresh the shared database between the scan and the metadata read.
-- `browser-release.json`
+- `browser-release.json` for the Chrome pin, the latest Linux stable release
+  in the vendor feed, and published severity-rated fixes newer than the pin.
 - `apko/sbom/` for native SPDX SBOMs.
 
-HIGH/CRITICAL findings block publication, including unfixed findings, except for
-explicit approved exceptions. Reports retain lower severities and suppressed
-findings. See the [exception scope and expiry](reproducibility.md#vulnerability-checks).
+Dependency vulnerabilities rated Moderate or Medium and above block publication,
+including unfixed findings. High and Critical secret findings also block
+publication. Reports retain lower severities and suppressed findings.
+See the [exception scope and expiry](reproducibility.md#vulnerability-checks).
 
 Trivy writes the complete JSON report, then `trivy convert` renders a native
-table and enforces HIGH/CRITICAL policy from that same scan. Image scans include
+table and enforces the severity thresholds using that same scan. Image scans include
 vulnerabilities and secrets. Exit 42 means policy findings; execution errors keep
 their exit status, including 126/127 for unavailable tools. An error, exclusion or
 unrun check is not a clean scan. The CLI's `--json` envelope remains separate from
@@ -207,12 +210,17 @@ retain the scanner, database, platform and image identity when quoting results.
 
 Trivy covers recognized Wolfi and discoverable Node inventories. Coverage of
 downloaded native binaries and Chrome is limited. A verified checksum is not a
-complete vulnerability audit; browser provenance and freshness complement scans.
+complete vulnerability audit. `mise run audit:host-tools` queries OSV for the
+repository's mise pins and the running mise version. Use mise 2026.11.12 or
+newer for this task. Medium and higher findings fail. The report in
+`.artifacts/mise-audit.json` retains lower and unrated findings and lists tools
+mise could not look up. The Chrome advisory audit checks Google's Linux stable
+releases separately.
 Use an isolated Trivy cache if another scan holds its lock; do not disable scans.
 
 ## CI coverage
 
-CI configures source and context checks, separate pnpm/repository/browser audits,
+CI configures source and context checks, separate pnpm, OSV, Trivy and Chrome audits,
 and four-profile Docker builds, runtime checks and Trivy scans on native Linux
 amd64 and arm64 runners. It uploads vulnerability reports and OS SBOMs.
 Runtime checks and scans require a successful build. A runtime-check failure

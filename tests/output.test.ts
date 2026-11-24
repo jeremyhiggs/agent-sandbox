@@ -648,6 +648,7 @@ test("repository audit preserves a post-scan metadata command failure", () =>
     mkdirSync(join(root, "scripts"));
     for (const file of [
       "scripts/security.ts",
+      "scripts/browser-audit.ts",
       "scripts/vulnerabilities.ts",
       "scripts/process.ts",
       ".trivyignore.yaml",
