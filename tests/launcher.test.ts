@@ -57,6 +57,25 @@ if (args[0] === 'exec' && args[2] === 'hc' && args[3] === 'run') console.log(JSO
   };
 }
 
+test("nested port mappings accept only two numeric TCP ports at creation", () => {
+  const args = ["run", "--name", "nested"];
+  assert.deepEqual(
+    parseInvocation([...args, "--publish", "8080:80", "--publish", "8081:81"])
+      .options.publish,
+    ["8080:80", "8081:81"],
+  );
+  for (const port of ["0:80", "8080:65536", "0.0.0.0:8080:80", "8080:80/udp"])
+    assert.throws(
+      () => parseInvocation([...args, "--publish", port]),
+      /expects HOST_PORT:GUEST_PORT/,
+    );
+  assert.throws(
+    () =>
+      parseInvocation(["start", "--name", "nested", "--no-nested-containers"]),
+    /chosen with run/,
+  );
+});
+
 test("Git identity overrides are literal creation settings", () => {
   const parsed = parseInvocation([
     "run",
@@ -174,6 +193,8 @@ test("Codex auth sharing mounts only the read-only credential file", () =>
     writeFileSync(join(codex, "config.toml"), "# host only\n");
     writeFileSync(join(codex, "history.jsonl"), "private history\n");
     mkdirSync(join(codex, "sessions"));
+    const workspace = join(root, "fixture");
+    mkdirSync(workspace);
     const path = process.env.PATH;
     process.env.PATH = runtime.env.PATH;
     try {
@@ -181,6 +202,7 @@ test("Codex auth sharing mounts only the read-only credential file", () =>
         name: "auth-file",
         home: root,
         "mount-codex-auth": true,
+        volume: [`${workspace}:/workspace:ro`],
         herdr: false,
       });
     } finally {
@@ -192,9 +214,18 @@ test("Codex auth sharing mounts only the read-only credential file", () =>
     const volumes = launch.flatMap((arg, index) =>
       arg === "--volume" ? [launch[index + 1]] : [],
     );
-    assert.deepEqual(volumes, [`${auth}:${auth}:ro`]);
+    assert.deepEqual(volumes, [
+      `${auth}:${auth}:ro`,
+      `${workspace}:/workspace:ro`,
+    ]);
     assert.ok(launch.includes(`CODEX_HOME=${codex}`));
-    assert.ok(!launch.includes("--masked-path"));
+    assert.ok(launch.includes("--masked-path"));
+    const prep = calls.find(
+      (args) => args[0] === "exec" && args[1] === "--user",
+    );
+    assert.ok(prep);
+    assert.ok(prep.includes(codex));
+    assert.ok(!prep.includes("/workspace"));
     assert.ok(!calls.some((args) => args.includes("ln")));
   }));
 

@@ -55,6 +55,12 @@ discover terminals with `terminals --json`. Launcher errors include
 
 ## Sharing and agent choice
 
+New sandboxes run Podman rootless inside the guest. Use `podman build`,
+`podman run` and `podman-compose` for local integration tests. Set
+`--publish HOST_PORT:GUEST_PORT` at creation when the Mac needs loopback access
+to a published guest port. Use `--no-nested-containers` for older or custom
+images that lack the Podman setup.
+
 Nothing is mounted by default. Recommend only the mounts needed for the task:
 
 - `--mount-git` shares the current checkout/worktree; `--mount-git PATH` selects another.

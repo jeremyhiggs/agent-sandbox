@@ -41,18 +41,26 @@ go = "1"
 run = ["python --version", "go version"]
 ```
 
-Run inside the guest:
+Run the language tool setup inside the guest:
 
 ```sh
 mise trust
-mise bootstrap packages apply --manager apk
 mise install
 mise run versions
 ```
 
-`mise install` does not apply bootstrap packages. The APK manager uses the guest's
-configured Wolfi repositories, so package names must match Wolfi. These additions
-change the sandbox filesystem, not the committed image locks. They survive
+New sandboxes run workloads as UID 1000. To install the example APK packages,
+run the command below on the Mac as the sandbox owner. Replace `feature` with
+the sandbox name.
+
+```sh
+container exec --user 0 feature apk add build-base openssl-dev
+```
+
+In a root sandbox created with `--no-nested-containers`, you can run
+`mise bootstrap packages apply --manager apk` from the trusted repository to
+apply its `[bootstrap.packages]`. The APK manager uses the guest's configured
+Wolfi repositories, so package names must match Wolfi. Guest packages survive
 stop/start and disappear when the sandbox is deleted, except for files written
 to a shared host directory.
 
@@ -64,10 +72,10 @@ extensions still need the relevant libraries and headers. See the
 
 ## Find packages
 
-Search the guest's current catalogue before adding dependencies:
+To refresh the guest catalogue, run `container exec --user 0 feature apk update`
+from the Mac. Search it inside the guest before adding dependencies:
 
 ```sh
-apk update
 apk search 'go-*'
 apk search ninja
 apk policy openssl-dev

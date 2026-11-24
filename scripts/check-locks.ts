@@ -141,6 +141,18 @@ assert.ok(
 const artifacts = JSON.parse(
   readFileSync(join(image, "artifacts.json"), "utf8"),
 );
+for (const [tool, entries] of [
+  ["passt", [artifacts.passt.arm64, artifacts.passt.amd64]],
+  ["podman-compose", [artifacts["podman-compose"]]],
+  ["python-dotenv", [artifacts["python-dotenv"]]],
+] as const) {
+  const version = artifacts[tool].version;
+  assert.ok(typeof version === "string" && version.length);
+  for (const entry of entries) {
+    assert.match(entry.sha256, /^[a-f0-9]{64}$/);
+    assert.ok(entry.url.startsWith("https://") && entry.url.includes(version));
+  }
+}
 for (const tool of ["pnpm", "hc"]) {
   assert.equal(
     artifacts[tool].version,

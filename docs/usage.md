@@ -71,6 +71,35 @@ sandbox it selects only a program, which must already be installed there.
 `--prompt TEXT` supplies its initial prompt and requires `--agent`; it cannot
 combine with `--exec`.
 
+### Nested containers
+
+The base image includes Podman, Podman Compose and pasta. New sandboxes run as
+UID 1000 by default, with access to the guest's TUN device. Apple Container's
+default `/proc` and `/sys` path restrictions are relaxed for nested namespaces.
+Host mounts are opt-in and retain their configured read/write access. Podman
+runs inside the Apple Linux VM and uses the guest's own image store.
+
+```sh
+agent-sandbox run --name nested --agent codex --mount-git --publish 8080:8080
+```
+
+Within the guest, run `podman build`, `podman run` or `podman-compose up -d`
+from the checkout. For a service listening on port 80 in an inner container,
+use `podman run -p 8080:80 IMAGE` or the Compose port mapping `"8080:80"`.
+Codex and other guest processes can then reach `http://127.0.0.1:8080`.
+The optional `--publish 8080:8080` on the outer sandbox also forwards that
+guest port to `http://127.0.0.1:8080` on the Mac. For host access, let Podman
+bind the published guest port on the guest network interface. A mapping such
+as `127.0.0.1:8080:80` limits access to the guest itself. Use guest ports
+above 1023.
+
+The outer CPU and memory allocations apply to the entire guest. Inner cgroups
+are disabled. Images and volumes persist across sandbox stop and start. Port
+forwarding is set when the sandbox is created. For an older or custom image,
+use `--no-nested-containers` to create a guest with the image's default user and
+Apple Container's default path restrictions. Existing sandboxes keep their
+creation settings.
+
 ### Git commit identity
 
 With `--mount-git`, the host resolves Git's effective author and committer identity
@@ -213,9 +242,10 @@ deletion or stopping an `--rm` guest, export local work and save a
 | `agent-sandbox:opencode` | OpenCode                                 |
 | `agent-sandbox:claude`   | Claude Code                              |
 
-Every image includes mise, Node, pnpm, Git, Git LFS, gh, hc, agent-browser and
-Chrome. No host browser or browser profile is mounted. Agent CLIs are separated
-by profile; install another CLI in the guest before selecting it there.
+Every image includes mise, Node, pnpm, Git, Git LFS, gh, hc, agent-browser,
+Chrome, Podman and `podman-compose`. No host browser or browser profile is
+mounted. Agent CLIs are separated by profile. Install another CLI in the guest
+before selecting it there.
 
 `mise run build` builds all four profiles and reuses the common layers. Build a
 single profile with `agent-sandbox build --profile codex`. The launcher controls
@@ -229,8 +259,8 @@ for its vendor CPU selection behavior.
 
 Review the repository's configuration, then run `mise trust`, `mise install`
 and its tasks inside the guest. Nothing is trusted or run automatically.
-System dependencies can use `[bootstrap.packages]` and
-`mise bootstrap packages apply --manager apk`.
+System package installation requires guest root. See the
+[base-image guide](base-image.md#add-repository-dependencies) for APK commands.
 
 The image omits npm, npx, compilers, make and development headers. See
 [base-image dependency setup](base-image.md#add-repository-dependencies) for

@@ -77,6 +77,10 @@ run = "node scripts/sandbox.ts scan --engine container --profile base --json"
 description = "Exercise persistent lifecycle, terminals, opt-in mounts, and isolated host hc"
 run = "node scripts/smoke.ts"
 
+[tasks."smoke:nested"]
+description = "Build and run rootless Podman and Compose fixtures, including host port forwarding"
+run = "node scripts/smoke-nested.ts"
+
 [tasks.setup]
 description = "Install the locked Node type definitions"
 run = "pnpm install --frozen-lockfile --ignore-scripts"

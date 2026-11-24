@@ -43,6 +43,9 @@ const CORE_SOCKET_LABEL = "dev.agent-container.hc-socket";
 const VIA_LABEL = "dev.agent-container.hc-via";
 const SPACE_LABEL = "dev.agent-container.herdr-space";
 const TAB_LABEL = "dev.agent-container.herdr-tab";
+const NESTED_LABEL = "dev.agent-container.nested-containers";
+const NESTED_HOME = "/var/lib/agent-sandbox/podman";
+const NESTED_RUNTIME = "/run/agent-sandbox-podman";
 
 function inside(path: string, parent: string): boolean {
   return (
@@ -382,6 +385,8 @@ export type Options = {
   profile?: string;
   prompt?: string;
   volume?: string[];
+  publish?: string[];
+  "no-nested-containers"?: boolean;
   "mount-codex-auth"?: boolean;
   "mount-skills"?: boolean;
   detach?: boolean;
@@ -544,6 +549,29 @@ function appTarget(
   };
 }
 
+function prepareNestedSandbox(
+  container: string,
+  name: string,
+  localDirectories: string[] = [],
+): void {
+  run(container, [
+    "exec",
+    "--user",
+    "0",
+    name,
+    "sh",
+    "-ec",
+    `chgrp 1000 /dev/net/tun
+chmod 0660 /dev/net/tun
+mkdir -p "$@"
+chown 1000:1000 "$@"
+chmod 0700 "$1"`,
+    "prepare-podman",
+    NESTED_RUNTIME,
+    ...localDirectories,
+  ]);
+}
+
 export function createSandbox(options: Options): string {
   const name = requireName(options.name ?? "");
   if (options.herdr && name.length > 32)
@@ -555,7 +583,9 @@ export function createSandbox(options: Options): string {
   const workdir = checkout ?? "/workspace";
   const home = realpathSync(options.home ?? homedir());
   const mounts = mountPlan(checkout, home, options);
+  const nested = !options["no-nested-containers"];
   const identity = gitIdentityEnvironment(checkout, options);
+  // Keep host-relative paths for shared skills and Codex auth.
   const codex = join(home, ".codex");
   const sharedCodex = options["mount-codex-auth"];
   const container = executable("container");
@@ -571,8 +601,7 @@ export function createSandbox(options: Options): string {
     [SPACE_LABEL]: options.herdr ? `sp${randomUUID().slice(0, 8)}` : "",
     [TAB_LABEL]: "",
   };
-  // Only selected subdirectories are mounted; this home path itself is guest-local.
-  const guestHome = home;
+  if (nested) labels[NESTED_LABEL] = "true";
   const args = [
     "run",
     "--detach",
@@ -585,7 +614,7 @@ export function createSandbox(options: Options): string {
     "--workdir",
     checkout ?? "/",
     "--env",
-    `HOME=${guestHome}`,
+    `HOME=${home}`,
     "--env",
     "AGENT_BROWSER_SOCKET_DIR=/tmp/agent-browser",
     "--env",
@@ -595,6 +624,25 @@ export function createSandbox(options: Options): string {
     "--dns",
     options.dns ?? DEFAULT_DNS,
   ];
+  if (nested)
+    args.push(
+      "--user",
+      "1000:1000",
+      "--masked-path",
+      "NONE",
+      "--read-only-path",
+      "NONE",
+      "--tmpfs",
+      NESTED_RUNTIME,
+      "--env",
+      `XDG_RUNTIME_DIR=${NESTED_RUNTIME}`,
+      "--env",
+      `CONTAINERS_CONF_OVERRIDE=${NESTED_HOME}/.config/containers/containers.conf`,
+      "--env",
+      `PNPM_HOME=${home}/.local/share/pnpm`,
+    );
+  for (const port of options.publish ?? [])
+    args.push("--publish", `127.0.0.1:${port}`);
   for (const [key, value] of Object.entries(labels))
     args.push("--label", `${key}=${value}`);
   if (options.rm) args.push("--rm");
@@ -617,17 +665,20 @@ export function createSandbox(options: Options): string {
     options.image ?? `agent-sandbox:${options.agent ?? "base"}`,
   ]);
   try {
-    run(container, [
-      "exec",
-      name,
-      "mkdir",
-      "-p",
-      guestHome,
-      workdir,
-      CODEX_SQLITE_HOME,
-    ]);
-    if (options.agent === "codex" || sharedCodex)
-      run(container, ["exec", name, "mkdir", "-p", codex]);
+    const directories = [home, workdir, CODEX_SQLITE_HOME];
+    if (options.agent === "codex" || sharedCodex) directories.push(codex);
+    if (nested) {
+      const targets = [...mounts.keys()];
+      prepareNestedSandbox(
+        container,
+        name,
+        directories.filter(
+          (path) => !targets.some((target) => inside(path, target)),
+        ),
+      );
+    } else {
+      run(container, ["exec", name, "mkdir", "-p", ...directories]);
+    }
     if (checkout)
       run(container, [
         "exec",
@@ -823,6 +874,7 @@ function jsonRequested(input: string[]): boolean {
     } else if (
       arg === "-v" ||
       arg === "--volume" ||
+      arg === "--publish" ||
       STRING_OPTIONS.some((name) => arg === `--${name}`)
     )
       index++;
@@ -896,6 +948,8 @@ export function parseInvocation(input: string[]) {
       ),
       herdr: { type: "boolean", default: false },
       volume: { type: "string", short: "v", multiple: true, default: [] },
+      publish: { type: "string", multiple: true, default: [] },
+      "no-nested-containers": { type: "boolean", default: false },
       "mount-codex-auth": { type: "boolean", default: false },
       "mount-skills": { type: "boolean", default: false },
       detach: { type: "boolean", short: "d", default: false },
@@ -910,6 +964,24 @@ export function parseInvocation(input: string[]) {
   if (values.skill) command = "skill";
   if (values.version) command = "version";
   const options = values as Options;
+  if (
+    (options["no-nested-containers"] || options.publish?.length) &&
+    !["run", "help", "skill", "version"].includes(command)
+  )
+    throw new Error(
+      "Nested containers and port publishing are chosen with run",
+    );
+  for (const port of options.publish ?? []) {
+    if (
+      !/^\d{1,5}:\d{1,5}$/.test(port) ||
+      port
+        .split(":")
+        .some((value) => Number(value) < 1 || Number(value) > 65535)
+    )
+      throw new Error(
+        "--publish expects HOST_PORT:GUEST_PORT with TCP ports 1-65535",
+      );
+  }
   if (options["mount-git"] === "")
     throw new Error("--mount-git requires a nonempty path");
   if (!command) throw new Error("Choose a command; run agent-sandbox --help");
@@ -1089,6 +1161,8 @@ build / scan                  Build or scan images
   --mount-codex-auth              Mount only host Codex auth.json read-only
   --mount-skills                  Share host agent skills read-only
   -v, --volume SOURCE:TARGET:ro|rw  Share a directory at an absolute guest path (repeatable)
+  --no-nested-containers          Start an older or custom image without rootless Podman setup
+  --publish HOST_PORT:GUEST_PORT  Forward macOS loopback TCP to the guest (repeatable)
 Creation: --home PATH --image TAG --dns IP --cpus N --memory 4G
 Without --mount-git, workloads start in /workspace; --volume does not select the working directory.
 By default /workspace is guest-local; a directory mounted there becomes the starting location.
@@ -1183,6 +1257,8 @@ Launch options precede --exec. Use --exec sh -lc '...' for shell syntax.`;
     } else if (command === "start") {
       const labels = sandboxLabels(name);
       run("container", ["start", name]);
+      if (labels[NESTED_LABEL] === "true")
+        prepareNestedSandbox("container", name);
       registerSandbox(name, labels);
     }
     const result = await workload(name, argv, options, custom);

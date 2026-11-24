@@ -17,6 +17,9 @@ for (const tool of [
   "gh",
   "agent-browser",
   "hc",
+  "podman",
+  "podman-compose",
+  "pasta",
 ]) {
   execFileSync(tool, ["--version"], { stdio: "inherit" });
 }

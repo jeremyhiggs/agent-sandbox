@@ -4,6 +4,7 @@ import {
   copyFileSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -12,6 +13,7 @@ import { join } from "node:path";
 import { PROFILE_PACKAGES } from "../image/packages.ts";
 
 const root = join(import.meta.dirname, "..", "image");
+const artifactLock = join(root, "artifacts.json");
 function version(tool: string): string {
   const pin = process.env[`IMAGE_${tool}_VERSION`];
   if (!pin) throw new Error(`Missing IMAGE_${tool}_VERSION; run through mise`);
@@ -36,6 +38,7 @@ const manifest = (await manifestResponse.json()) as {
   targets: Record<string, { url: string; sha256: string }>;
 };
 const lock: Record<string, unknown> = {
+  ...JSON.parse(readFileSync(artifactLock, "utf8")),
   pnpm: {
     version: version("PNPM"),
     ...(await artifact(
@@ -93,7 +96,4 @@ for (const [profile, { dependency, variable }] of Object.entries(
     rmSync(temporary, { recursive: true, force: true });
   }
 }
-writeFileSync(
-  join(root, "artifacts.json"),
-  `${JSON.stringify(lock, null, 2)}\n`,
-);
+writeFileSync(artifactLock, `${JSON.stringify(lock, null, 2)}\n`);

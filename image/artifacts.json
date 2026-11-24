@@ -14,5 +14,26 @@
       "url": "https://releases.herdr.dev/core/0.1.20/herdr-core-linux-x86_64.tar.gz",
       "sha256": "ac6b86890c451a37584620aaa438b71bc0d0bd430a2e7c1d7e095f052c414e74"
     }
+  },
+  "passt": {
+    "version": "0.0~git20261002.cba3570-1",
+    "arm64": {
+      "url": "https://deb.debian.org/debian/pool/main/p/passt/passt_0.0~git20261002.cba3570-1_arm64.deb",
+      "sha256": "44332f455df5591be3642a7290ced33c9389fbf8c63393b2a5fbe59f8e6cc196"
+    },
+    "amd64": {
+      "url": "https://deb.debian.org/debian/pool/main/p/passt/passt_0.0~git20261002.cba3570-1_amd64.deb",
+      "sha256": "f3636cb53c0d7fb8c7306be51d0802f9d011c9dd28abc26656c0c33e4db48c05"
+    }
+  },
+  "podman-compose": {
+    "version": "1.6.0",
+    "url": "https://files.pythonhosted.org/packages/93/31/b38c2656bad6265168902793c60145b172788a79e4b15de212af9bd78728/podman_compose-1.6.0-py3-none-any.whl",
+    "sha256": "98e48af25d44c10ecef948163bfcca002e32aa8bbb7e66593fbd4faff7270c30"
+  },
+  "python-dotenv": {
+    "version": "1.2.4",
+    "url": "https://files.pythonhosted.org/packages/60/d1/38f3a3405989a89ac18390803e70c6ad7c7760da4f9b83cbeca0c44a0c72/python_dotenv-1.2.4-py3-none-any.whl",
+    "sha256": "42269a8a5b3fd54ffa6f3d84b18abed50064717576b4ecf03dc4a55d8aa04fdc"
   }
 }

@@ -78,6 +78,13 @@ close the browser. See [reproducibility](reproducibility.md) for locks and hashe
 
 ## Lifecycle, mounts, and terminals
 
+After building the base image, `mise run smoke:nested` verifies a rootless
+Podman build, a standalone container and a two-service Compose stack in a
+disposable Apple guest. It builds from a shared linked worktree and tests inner
+read/write and read-only bind mounts alongside synthetic Codex auth and skills
+mounts. It also tests HTTP from the guest and macOS loopback, DNS between Compose
+services, and that an image can run again after a guest restart.
+
 Launcher checks need Apple Container running and the images in its image store.
 Run `mise run build` if they are missing. Docker image checks use a separate
 image store and do not prepare these launcher tests.
